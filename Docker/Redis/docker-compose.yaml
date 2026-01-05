@@ -1,0 +1,21 @@
+version: "3.8"
+
+services:
+  redis:
+    container_name: redis
+    image: redis:7
+    restart: always
+    networks:
+      - evolution-net
+    command: redis-server --port 6379 --appendonly yes
+    ports:
+      - "6379:6379"
+    volumes:
+      - evolution_redis:/data
+
+volumes:
+  evolution_redis:
+
+networks:
+  evolution-net:
+    driver: bridge
