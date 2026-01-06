@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <title>Monitor de Chats</title>
+    <style>
+        body { font-family: Arial; display: flex; height: 100vh; margin: 0; }
+        #chats { width: 250px; border-right: 1px solid #ccc; padding: 10px; }
+        #historico { flex: 1; padding: 10px; }
+        li { cursor: pointer; padding: 5px; }
+        li:hover { background: #eee; }
+        pre { white-space: pre-wrap; }
+        button { margin-top: 10px; }
+    </style>
+</head>
+<body>
+
+<div id="chats">
+    <h3>Chats ativos</h3>
+    <ul id="lista"></ul>
+</div>
+
+<div id="historico">
+    <h3 id="titulo">Selecione um número</h3>
+    <pre id="msgs"></pre>
+    <button onclick="limpar()">Limpar chat</button>
+</div>
+
+<script>
+let chatAtual = null;
+
+function carregarChats() {
+    fetch("/api/chats")
+        .then(r => r.json())
+        .then(data => {
+            const lista = document.getElementById("lista");
+            lista.innerHTML = "";
+            data.forEach(n => {
+                const li = document.createElement("li");
+                li.textContent = n;
+                li.onclick = () => carregarHistorico(n);
+                lista.appendChild(li);
+            });
+        });
+}
+
+function carregarHistorico(numero) {
+    chatAtual = numero;
+    document.getElementById("titulo").innerText = "Chat: " + numero;
+
+    fetch("/api/historico/" + numero)
+        .then(r => r.json())
+        .then(msgs => {
+            document.getElementById("msgs").innerText = msgs.join("\n");
+        });
+}
+
+function limpar() {
+    if (!chatAtual) return;
+    fetch("/api/clear/" + chatAtual, { method: "POST" })
+        .then(() => {
+            document.getElementById("msgs").innerText = "";
+            carregarChats();
+        });
+}
+
+carregarChats();
+setInterval(carregarChats, 5000); // auto refresh
+</script>
+
+</body>
+</html>

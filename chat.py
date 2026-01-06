@@ -1,13 +1,12 @@
 from google import genai
+import reds
 
 client = genai.Client()
-
+r = reds.Redis(host='localhost', port=6379, db=0, decode_responses=True)
 
 x = 0
 
-
-
-def chat():
+def chat(id, historico=[]):
     while True:
         mensagem = input("Você: ")
         if mensagem.lower() == "sair":
