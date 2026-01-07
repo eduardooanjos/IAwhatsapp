@@ -4,13 +4,65 @@
     <meta charset="UTF-8">
     <title>Monitor de Chats</title>
     <style>
-        body { font-family: Arial; display: flex; height: 100vh; margin: 0; }
-        #chats { width: 250px; border-right: 1px solid #ccc; padding: 10px; }
-        #historico { flex: 1; padding: 10px; }
-        li { cursor: pointer; padding: 5px; }
-        li:hover { background: #eee; }
-        pre { white-space: pre-wrap; }
-        button { margin-top: 10px; }
+        body {
+            font-family: Arial, sans-serif;
+            display: flex;
+            height: 100vh;
+            margin: 0;
+        }
+
+        #chats {
+            width: 260px;
+            border-right: 1px solid #ccc;
+            padding: 10px;
+            overflow-y: auto;
+        }
+
+        #historico {
+            flex: 1;
+            padding: 10px;
+            display: flex;
+            flex-direction: column;
+        }
+
+        ul {
+            list-style: none;
+            padding: 0;
+        }
+
+        li {
+            cursor: pointer;
+            padding: 8px;
+            border-bottom: 1px solid #eee;
+        }
+
+        li:hover {
+            background: #f2f2f2;
+        }
+
+        .msg {
+            margin-bottom: 10px;
+            padding: 8px;
+            border-radius: 5px;
+        }
+
+        .cliente {
+            background: #e3f2fd;
+        }
+
+        .ia {
+            background: #e8f5e9;
+        }
+
+        #msgs {
+            flex: 1;
+            overflow-y: auto;
+        }
+
+        button {
+            margin-top: 10px;
+            padding: 6px;
+        }
     </style>
 </head>
 <body>
@@ -21,8 +73,8 @@
 </div>
 
 <div id="historico">
-    <h3 id="titulo">Selecione um número</h3>
-    <pre id="msgs"></pre>
+    <h3 id="titulo">Selecione um chat</h3>
+    <div id="msgs"></div>
     <button onclick="limpar()">Limpar chat</button>
 </div>
 
@@ -31,14 +83,15 @@ let chatAtual = null;
 
 function carregarChats() {
     fetch("/api/chats")
-        .then(r => r.json())
-        .then(data => {
+        .then(res => res.json())
+        .then(chats => {
             const lista = document.getElementById("lista");
             lista.innerHTML = "";
-            data.forEach(n => {
+
+            chats.forEach(numero => {
                 const li = document.createElement("li");
-                li.textContent = n;
-                li.onclick = () => carregarHistorico(n);
+                li.textContent = numero;
+                li.onclick = () => carregarHistorico(numero);
                 lista.appendChild(li);
             });
         });
@@ -49,23 +102,45 @@ function carregarHistorico(numero) {
     document.getElementById("titulo").innerText = "Chat: " + numero;
 
     fetch("/api/historico/" + numero)
-        .then(r => r.json())
+        .then(res => res.json())
         .then(msgs => {
-            document.getElementById("msgs").innerText = msgs.join("\n");
+            const div = document.getElementById("msgs");
+            div.innerHTML = "";
+
+            msgs.forEach(m => {
+                if (m.cliente) {
+                    const c = document.createElement("div");
+                    c.className = "msg cliente";
+                    c.innerText = "Cliente: " + m.cliente;
+                    div.appendChild(c);
+                }
+
+                if (m.ia) {
+                    const i = document.createElement("div");
+                    i.className = "msg ia";
+                    i.innerText = "IA: " + m.ia;
+                    div.appendChild(i);
+                }
+            });
+
+            div.scrollTop = div.scrollHeight;
         });
 }
 
 function limpar() {
     if (!chatAtual) return;
+
     fetch("/api/clear/" + chatAtual, { method: "POST" })
         .then(() => {
-            document.getElementById("msgs").innerText = "";
+            document.getElementById("msgs").innerHTML = "";
+            document.getElementById("titulo").innerText = "Selecione um chat";
+            chatAtual = null;
             carregarChats();
         });
 }
 
 carregarChats();
-setInterval(carregarChats, 5000); // auto refresh
+setInterval(carregarChats, 5000);
 </script>
 
 </body>
