@@ -48,6 +48,19 @@ function atualizarHistorico() {
         });
 }
 
+function limpar() {
+    if (!chatAtual) return;
+
+    fetch("/api/clear/" + chatAtual, {
+        method: "POST"
+    }).then(() => {
+        document.getElementById("msgs").innerHTML = "";
+        carregarChats();
+    });
+}
+
+
+
 // 🔁 atualiza automaticamente
 setInterval(() => {
     carregarChats();

@@ -24,6 +24,12 @@ def historico(numero):
 
     return jsonify(mensagens)
 
+@app.route("/api/clear/<numero>", methods=["POST"])
+def limpar_chat(numero):
+    r.delete(numero)                 # apaga lista de mensagens
+    r.srem("chats_ativos", numero)   # remove dos chats ativos
+    return jsonify({"ok": True})
+
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8000)
