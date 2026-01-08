@@ -7,9 +7,9 @@ app = Flask(__name__)
 # =====================
 # EVOLUTION
 # =====================
-EVOLUTION_SEND_URL = "http://localhost:8080/message/sendText/teste"
+EVOLUTION_SEND_URL = "http://localhost:8080/message/sendText/secundario"
 EVOLUTION_API_KEY = "senha"
-INSTANCE = "teste"
+INSTANCE = "secundario"
 
 # =====================
 # OLLAMA
