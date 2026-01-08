@@ -13,11 +13,17 @@ def chats():
 
 @app.route("/api/historico/<numero>")
 def historico(numero):
-    out = []
+    mensagens = []
+
     for mid in r.lrange(numero, 0, -1):
         msg = r.hgetall(f"msg:{mid}")
-        out.append(msg)
-    return jsonify(out)
+        mensagens.append({
+            "cliente": msg.get("cliente", ""),
+            "ia": msg.get("ia", "")
+        })
+
+    return jsonify(mensagens)
+
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8000)

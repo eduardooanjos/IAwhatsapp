@@ -2,15 +2,15 @@ let chatAtual = null;
 
 function carregarChats() {
     fetch("/api/chats")
-        .then(res => res.json())
+        .then(r => r.json())
         .then(chats => {
             const lista = document.getElementById("lista");
             lista.innerHTML = "";
 
-            chats.forEach(numero => {
+            chats.forEach(n => {
                 const li = document.createElement("li");
-                li.textContent = numero;
-                li.onclick = () => carregarHistorico(numero);
+                li.innerText = n;
+                li.onclick = () => carregarHistorico(n);
                 lista.appendChild(li);
             });
         });
@@ -19,44 +19,37 @@ function carregarChats() {
 function carregarHistorico(numero) {
     chatAtual = numero;
     document.getElementById("titulo").innerText = "Chat: " + numero;
+    atualizarHistorico();
+}
 
-    fetch("/api/historico/" + numero)
-        .then(res => res.json())
+function atualizarHistorico() {
+    if (!chatAtual) return;
+
+    fetch("/api/historico/" + chatAtual)
+        .then(r => r.json())
         .then(msgs => {
             const div = document.getElementById("msgs");
             div.innerHTML = "";
 
             msgs.forEach(m => {
-                if (m.cliente) {
-                    const c = document.createElement("div");
-                    c.className = "msg cliente";
-                    c.innerText = "Cliente: " + m.cliente;
-                    div.appendChild(c);
-                }
+                const c = document.createElement("div");
+                c.className = "msg cliente";
+                c.innerText = "Cliente: " + m.cliente;
 
-                if (m.ia) {
-                    const i = document.createElement("div");
-                    i.className = "msg ia";
-                    i.innerText = "IA: " + m.ia;
-                    div.appendChild(i);
-                }
+                const i = document.createElement("div");
+                i.className = "msg ia";
+                i.innerText = "IA: " + m.ia;
+
+                div.appendChild(c);
+                div.appendChild(i);
             });
 
             div.scrollTop = div.scrollHeight;
         });
 }
 
-function limpar() {
-    if (!chatAtual) return;
-
-    fetch("/api/clear/" + chatAtual, { method: "POST" })
-        .then(() => {
-            document.getElementById("msgs").innerHTML = "";
-            document.getElementById("titulo").innerText = "Selecione um chat";
-            chatAtual = null;
-            carregarChats();
-        });
-}
-
-carregarChats();
-setInterval(carregarChats, 5000);
+// 🔁 atualiza automaticamente
+setInterval(() => {
+    carregarChats();
+    atualizarHistorico();
+}, 1500);
