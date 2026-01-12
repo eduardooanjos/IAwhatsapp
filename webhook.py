@@ -49,7 +49,7 @@ def extrair_numero(data):
 
     return remote_jid.split("@")[0]
 
-# =====================
+# ====================
 # IA
 # =====================
 def responder_ia(numero, texto_cliente, msg_id):
