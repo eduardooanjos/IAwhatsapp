@@ -18,9 +18,12 @@ client = genai.Client()
 # =====================
 # EVOLUTION
 # =====================
-EVOLUTION_SEND_URL = "http://localhost:8080/message/sendText/secundario"
-EVOLUTION_API_KEY = "senha"
 INSTANCE = "secundario"
+EVOLUTION_API_KEY = "senha"
+
+# ⚠️ Se estiver em Docker, use o nome do container
+EVOLUTION_SEND_URL = "http://localhost:8080/message/sendText/secundario"
+# EVOLUTION_SEND_URL = "http://evolution-api:8080/message/sendText/secundario"
 
 HEADERS = {
     "Content-Type": "application/json",
@@ -30,26 +33,19 @@ HEADERS = {
 # =====================
 # UTIL
 # =====================
-def extrair_numero(data):
-    msg = data.get("data", {})
+def extrair_numero(msg):
     key = msg.get("key", {})
 
-    # ignora mensagens enviadas por você
-    if key.get("fromMe"):
+    jid = key.get("remoteJidAlt") or key.get("remoteJid")
+    if not jid:
         return None
 
-    remote_jid = key.get("remoteJid", "")
-    if not remote_jid:
-        return None
+    if "@s.whatsapp.net" in jid:
+        return jid.replace("@s.whatsapp.net", "")
 
-    # ignora LID
-    if remote_jid.endswith("@lid"):
-        print("⚠️ Mensagem via LID — ignorada")
-        return None
+    return None
 
-    return remote_jid.split("@")[0]
-
-# ====================
+# =====================
 # IA
 # =====================
 def responder_ia(numero, texto_cliente, msg_id):
@@ -65,7 +61,7 @@ def responder_ia(numero, texto_cliente, msg_id):
 
         payload = {
             "instance": INSTANCE,
-            "number": numero,
+            "number": numero,  # ex: 556992579600
             "text": resposta
         }
 
@@ -88,16 +84,22 @@ def responder_ia(numero, texto_cliente, msg_id):
 def webhook():
     data = request.json or {}
 
+    # evento errado
     if data.get("event") != "messages.upsert":
         return "ok", 200
 
     msg = data.get("data", {})
     key = msg.get("key", {})
 
+    # ignora mensagens internas / criptografia
+    if msg.get("messageStubType"):
+        return "ok", 200
+
+    # ignora mensagens enviadas pela própria IA
     if key.get("fromMe"):
         return "ok", 200
 
-    numero = extrair_numero(data)
+    numero = extrair_numero(msg)
     if not numero:
         return "ok", 200
 
@@ -113,9 +115,6 @@ def webhook():
 
     print(f"📩 {numero}: {texto}")
 
-    # registra chat ativo
-    r.sadd("chats_ativos", numero)
-
     msg_id = str(uuid.uuid4())
 
     r.hset(f"msg:{msg_id}", mapping={
@@ -123,6 +122,7 @@ def webhook():
         "ia": ""
     })
 
+    # mantém histórico curto por número
     r.rpush(numero, msg_id)
     r.ltrim(numero, -5, -1)
 
