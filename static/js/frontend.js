@@ -1,68 +1,79 @@
 let chatAtual = null;
 
-function carregarChats() {
-    fetch("/api/chats")
-        .then(r => r.json())
-        .then(chats => {
-            const lista = document.getElementById("lista");
-            lista.innerHTML = "";
+// =====================
+// LOAD CHATS
+// =====================
+async function carregarChats() {
+    const res = await fetch("/api/chats");
+    const chats = await res.json();
 
-            chats.forEach(n => {
-                const li = document.createElement("li");
-                li.innerText = n;
-                li.onclick = () => carregarHistorico(n);
-                lista.appendChild(li);
-            });
-        });
-}
+    const lista = document.getElementById("lista"); // ✔ ID correto
+    lista.innerHTML = "";
 
-function carregarHistorico(numero) {
-    chatAtual = numero;
-    document.getElementById("titulo").innerText = "Chat: " + numero;
-    atualizarHistorico();
-}
-
-function atualizarHistorico() {
-    if (!chatAtual) return;
-
-    fetch("/api/historico/" + chatAtual)
-        .then(r => r.json())
-        .then(msgs => {
-            const div = document.getElementById("msgs");
-            div.innerHTML = "";
-
-            msgs.forEach(m => {
-                const c = document.createElement("div");
-                c.className = "msg cliente";
-                c.innerText = "Cliente: " + m.cliente;
-
-                const i = document.createElement("div");
-                i.className = "msg ia";
-                i.innerText = "IA: " + m.ia;
-
-                div.appendChild(c);
-                div.appendChild(i);
-            });
-
-            div.scrollTop = div.scrollHeight;
-        });
-}
-
-function limpar() {
-    if (!chatAtual) return;
-
-    fetch("/api/clear/" + chatAtual, {
-        method: "POST"
-    }).then(() => {
-        document.getElementById("msgs").innerHTML = "";
-        carregarChats();
+    chats.forEach(numero => {
+        const li = document.createElement("li");
+        li.textContent = numero;
+        li.onclick = () => abrirChat(numero);
+        lista.appendChild(li);
     });
 }
 
+// =====================
+// OPEN CHAT
+// =====================
+async function abrirChat(numero) {
+    chatAtual = numero;
 
+    document.getElementById("titulo").textContent = `Chat ${numero}`;
 
-// 🔁 atualiza automaticamente
-setInterval(() => {
+    const res = await fetch(`/api/historico/${numero}`);
+    const mensagens = await res.json();
+
+    const box = document.getElementById("msgs"); // ✔ ID correto
+    box.innerHTML = "";
+
+    mensagens.forEach(msg => {
+        if (msg.cliente) {
+            const c = document.createElement("div");
+            c.className = "msg cliente";
+            c.textContent = msg.cliente;
+            box.appendChild(c);
+        }
+
+        if (msg.ia) {
+            const i = document.createElement("div");
+            i.className = "msg ia";
+            i.textContent = msg.ia;
+            box.appendChild(i);
+        }
+    });
+
+    box.scrollTop = box.scrollHeight;
+}
+
+// =====================
+// CLEAR CHAT
+// =====================
+async function limpar() { // ✔ nome correto
+    if (!chatAtual) return;
+
+    await fetch(`/api/clear/${chatAtual}`, { method: "POST" });
+
+    chatAtual = null;
+    document.getElementById("msgs").innerHTML = "";
+    document.getElementById("titulo").textContent = "Selecione um chat";
     carregarChats();
-    atualizarHistorico();
-}, 1500);
+}
+
+// =====================
+// AUTO REFRESH
+// =====================
+setInterval(() => {
+    if (chatAtual) abrirChat(chatAtual);
+    carregarChats();
+}, 2000);
+
+// =====================
+// INIT
+// =====================
+carregarChats();

@@ -1,13 +1,8 @@
 from flask import Flask, render_template, jsonify
-import redis
-
-r = redis.Redis(
-    host="localhost",
-    port=6379,
-    db=0,
-    decode_responses=True
-)
-
+from redis_conn import r
+# =====================
+# APP
+# =====================
 app = Flask(__name__)
 
 # =====================
@@ -22,35 +17,41 @@ def index():
 # =====================
 @app.route("/api/chats")
 def chats():
-    chats = [
-        c.decode("utf-8")
-        for c in r.smembers("chats_ativos")
-    ]
-    return jsonify(sorted(chats))
+    return jsonify(sorted(r.smembers("chats_ativos")))
+
 
 @app.route("/api/historico/<numero>")
 def historico(numero):
     mensagens = []
 
     for mid in r.lrange(numero, 0, -1):
-        mid = mid.decode("utf-8")
-
         msg = r.hgetall(f"msg:{mid}")
+
         mensagens.append({
-            "cliente": msg.get(b"cliente", b"").decode("utf-8"),
-            "ia": msg.get(b"ia", b"").decode("utf-8")
+            "cliente": msg.get("cliente", ""),
+            "ia": msg.get("ia", "")
         })
 
     return jsonify(mensagens)
 
+
 @app.route("/api/clear/<numero>", methods=["POST"])
 def limpar_chat(numero):
+    for mid in r.lrange(numero, 0, -1):
+        r.delete(f"msg:{mid}")
+
     r.delete(numero)
     r.srem("chats_ativos", numero)
+
     return jsonify({"ok": True})
 
 # =====================
 # START
 # =====================
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=8000, debug=False)
+    print("🖥️ Backend UI rodando em http://localhost:8000")
+    app.run(
+        host="0.0.0.0",
+        port=8000,
+        debug=False
+    )

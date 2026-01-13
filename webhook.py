@@ -114,6 +114,8 @@ def webhook():
         return "ok", 200
 
     print(f"📩 {numero}: {texto}")
+    
+    r.sadd("chats_ativos", numero)
 
     msg_id = str(uuid.uuid4())
 
