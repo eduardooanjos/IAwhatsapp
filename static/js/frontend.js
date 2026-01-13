@@ -66,6 +66,32 @@ async function limpar() { // ✔ nome correto
 }
 
 // =====================
+// INTRUÇÕES
+// =====================
+
+async function salvarInstrucao() {
+    const texto = document.getElementById("instrucao").value;
+
+    await fetch("/api/instrucoes", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ texto })
+    });
+
+    alert("Instruções salvas");
+}
+
+async function carregarInstrucao() {
+    const res = await fetch("/api/instrucoes");
+    const data = await res.json();
+
+    document.getElementById("instrucao").value = data.texto || "";
+}
+
+carregarInstrucao();
+
+
+// =====================
 // AUTO REFRESH
 // =====================
 setInterval(() => {

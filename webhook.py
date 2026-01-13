@@ -50,18 +50,36 @@ def extrair_numero(msg):
 # =====================
 def responder_ia(numero, texto_cliente, msg_id):
     try:
+        # 1️⃣ Carrega instruções do sistema
+        instrucoes = r.get("ia:instrucoes") or (
+            "Você é um atendente educado e objetivo. "
+            "Responda de forma clara e curta."
+        )
+
+        # 2️⃣ Monta prompt
+        prompt = f"""
+INSTRUÇÕES DO SISTEMA:
+{instrucoes}
+
+MENSAGEM DO USUÁRIO:
+{texto_cliente}
+"""
+
+        # 3️⃣ Chamada da IA
         response = client.models.generate_content(
             model="gemini-2.5-flash",
-            contents=texto_cliente
+            contents=prompt
         )
 
         resposta = response.text or "Não consegui responder agora."
 
+        # 4️⃣ Salva resposta
         r.hset(f"msg:{msg_id}", "ia", resposta)
 
+        # 5️⃣ Envia para WhatsApp
         payload = {
             "instance": INSTANCE,
-            "number": numero,  # ex: 556992579600
+            "number": numero,
             "text": resposta
         }
 
@@ -76,6 +94,7 @@ def responder_ia(numero, texto_cliente, msg_id):
 
     except Exception as e:
         print("❌ Erro Gemini:", e)
+
 
 # =====================
 # WEBHOOK
@@ -123,10 +142,9 @@ def webhook():
         "cliente": texto,
         "ia": ""
     })
-
-    # mantém histórico curto por número
+    
     r.rpush(numero, msg_id)
-    r.ltrim(numero, -5, -1)
+
 
     threading.Thread(
         target=responder_ia,

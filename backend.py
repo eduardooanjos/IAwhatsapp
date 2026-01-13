@@ -1,5 +1,6 @@
-from flask import Flask, render_template, jsonify
+from flask import Flask, render_template, jsonify, request
 from redis_conn import r
+
 # =====================
 # APP
 # =====================
@@ -44,6 +45,26 @@ def limpar_chat(numero):
     r.srem("chats_ativos", numero)
 
     return jsonify({"ok": True})
+
+
+# =====================
+# INSTRUÇÕES IA
+# =====================
+@app.route("/api/instrucoes", methods=["GET"])
+def carregar_instrucoes():
+    return jsonify({
+        "texto": r.get("ia:instrucoes") or ""
+    })
+
+
+@app.route("/api/instrucoes", methods=["POST"])
+def salvar_instrucoes():
+    data = request.json or {}
+    texto = data.get("texto", "").strip()
+
+    r.set("ia:instrucoes", texto)
+    return jsonify({"ok": True})
+
 
 # =====================
 # START
