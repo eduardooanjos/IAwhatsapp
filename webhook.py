@@ -21,7 +21,6 @@ client = genai.Client()
 INSTANCE = "secundario"
 EVOLUTION_API_KEY = "senha"
 
-# ⚠️ Se estiver em Docker, use o nome do container
 EVOLUTION_SEND_URL = "http://localhost:8080/message/sendText/secundario"
 # EVOLUTION_SEND_URL = "http://evolution-api:8080/message/sendText/secundario"
 
@@ -35,12 +34,9 @@ HEADERS = {
 # =====================
 def extrair_numero(msg):
     key = msg.get("key", {})
-
     jid = key.get("remoteJidAlt") or key.get("remoteJid")
-    if not jid:
-        return None
 
-    if "@s.whatsapp.net" in jid:
+    if jid and "@s.whatsapp.net" in jid:
         return jid.replace("@s.whatsapp.net", "")
 
     return None
@@ -50,22 +46,36 @@ def extrair_numero(msg):
 # =====================
 def responder_ia(numero, texto_cliente, msg_id):
     try:
-        # 1️⃣ Carrega instruções do sistema
+        # 1️⃣ Instruções do sistema (UI)
         instrucoes = r.get("ia:instrucoes") or (
-            "Você é um atendente educado e objetivo. "
-            "Responda de forma clara e curta."
+            "Você é um atendente educado, objetivo e profissional. "
+            "Responda de forma clara, curta e útil."
         )
 
-        # 2️⃣ Monta prompt
+        # 2️⃣ Últimas mensagens (contexto curto)
+        historico = []
+        for mid in r.lrange(numero, -5, -1):
+            m = r.hgetall(f"msg:{mid}")
+            if m.get("cliente"):
+                historico.append(f"Cliente: {m['cliente']}")
+            if m.get("ia"):
+                historico.append(f"Atendente: {m['ia']}")
+
+        historico_texto = "\n".join(historico)
+
+        # 3️⃣ Prompt final
         prompt = f"""
 INSTRUÇÕES DO SISTEMA:
 {instrucoes}
 
-MENSAGEM DO USUÁRIO:
+CONTEXTO RECENTE:
+{historico_texto}
+
+MENSAGEM ATUAL DO CLIENTE:
 {texto_cliente}
 """
 
-        # 3️⃣ Chamada da IA
+        # 4️⃣ Chamada IA
         response = client.models.generate_content(
             model="gemini-2.5-flash",
             contents=prompt
@@ -73,10 +83,10 @@ MENSAGEM DO USUÁRIO:
 
         resposta = response.text or "Não consegui responder agora."
 
-        # 4️⃣ Salva resposta
+        # 5️⃣ Salva resposta
         r.hset(f"msg:{msg_id}", "ia", resposta)
 
-        # 5️⃣ Envia para WhatsApp
+        # 6️⃣ Envia WhatsApp
         payload = {
             "instance": INSTANCE,
             "number": numero,
@@ -95,7 +105,6 @@ MENSAGEM DO USUÁRIO:
     except Exception as e:
         print("❌ Erro Gemini:", e)
 
-
 # =====================
 # WEBHOOK
 # =====================
@@ -103,18 +112,15 @@ MENSAGEM DO USUÁRIO:
 def webhook():
     data = request.json or {}
 
-    # evento errado
     if data.get("event") != "messages.upsert":
         return "ok", 200
 
     msg = data.get("data", {})
     key = msg.get("key", {})
 
-    # ignora mensagens internas / criptografia
     if msg.get("messageStubType"):
         return "ok", 200
 
-    # ignora mensagens enviadas pela própria IA
     if key.get("fromMe"):
         return "ok", 200
 
@@ -133,18 +139,20 @@ def webhook():
         return "ok", 200
 
     print(f"📩 {numero}: {texto}")
-    
+
+    # registra chat ativo
     r.sadd("chats_ativos", numero)
 
     msg_id = str(uuid.uuid4())
 
+    # salva mensagem
     r.hset(f"msg:{msg_id}", mapping={
         "cliente": texto,
         "ia": ""
     })
-    
-    r.rpush(numero, msg_id)
 
+    r.rpush(numero, msg_id)
+    r.ltrim(numero, -20, -1)  # histórico curto (controle de tokens)
 
     threading.Thread(
         target=responder_ia,
