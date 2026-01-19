@@ -27,6 +27,8 @@ const els = {
   modalClose: document.getElementById("modalClose"),
 };
 
+let LAST_CHAT = null;
+
 let STATE = {
   chats: [],
   active: null,  // {numero, ai_enabled, last_preview, updated_at}
@@ -34,6 +36,18 @@ let STATE = {
   autoTimer: null,
   showDebug: false,
 };
+
+function isNearBottom(el, thresholdPx = 30){
+  const distance = el.scrollHeight - el.scrollTop - el.clientHeight;
+  return distance <= thresholdPx;
+}
+
+function keepScrollIfNotNearBottom(el, wasNearBottom){
+  if(wasNearBottom){
+    el.scrollTop = el.scrollHeight;
+  }
+}
+  
 
 function fmtTime(ts){
   if(!ts) return "—";
@@ -141,8 +155,16 @@ function renderHeader(){
     ? "IA está <b>habilitada</b>. Para envio manual, desligue a IA neste chat."
     : "IA está <b>desabilitada</b>. Envie mensagens manualmente por aqui.";
 }
-
 function renderMessages(){
+  const activeNumero = STATE.active?.numero || null;
+
+  // entrou em outro chat? vai pro final
+  const chatChanged = (activeNumero && LAST_CHAT !== activeNumero);
+  if(chatChanged) LAST_CHAT = activeNumero;
+
+  // só considera "near bottom" se não trocou de chat
+  const wasNearBottom = chatChanged ? true : isNearBottom(els.messages, 30);
+
   if(!STATE.active){
     els.messages.classList.add("empty");
     els.messages.innerHTML = `
@@ -153,6 +175,7 @@ function renderMessages(){
     `;
     return;
   }
+
   els.messages.classList.remove("empty");
   els.messages.innerHTML = "";
 
@@ -168,6 +191,8 @@ function renderMessages(){
     return;
   }
 
+  const frag = document.createDocumentFragment();
+
   items.forEach(it=>{
     const role = it.role === "user" ? "user" : "assistant";
     const wrap = document.createElement("div");
@@ -181,11 +206,17 @@ function renderMessages(){
     `;
 
     wrap.appendChild(b);
-    els.messages.appendChild(wrap);
+    frag.appendChild(wrap);
   });
 
-  els.messages.scrollTop = els.messages.scrollHeight;
+  els.messages.appendChild(frag);
+
+  // aplica scroll depois do DOM estar pronto
+  requestAnimationFrame(() => {
+    keepScrollIfNotNearBottom(els.messages, wasNearBottom);
+  });
 }
+
 
 async function loadChats(){
   const data = await apiGet("/api/chats");
