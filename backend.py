@@ -1,166 +1,216 @@
-from flask import Flask, render_template, jsonify, request
-from redis_conn import r
+import os
+import json
+import time
+from typing import Dict, Any, List
 
-app = Flask(__name__)
+import requests
+from flask import Flask, jsonify, request, render_template
 
-def _b(v):
+from redis_conn import r  # precisa ter get/set/lrange/ltrim/lpush/smembers/sadd/delete
+
+# -----------------------
+# CONFIG
+# -----------------------
+PORT = int(os.getenv("PANEL_PORT", "8000"))
+
+INSTANCE = os.getenv("EVOLUTION_INSTANCE", "secundario")
+EVOLUTION_API_KEY = os.getenv("EVOLUTION_API_KEY", "senha")
+EVOLUTION_SEND_URL = os.getenv(
+    "EVOLUTION_SEND_URL",
+    f"http://localhost:8080/message/sendText/{INSTANCE}"
+)
+HEADERS = {"Content-Type": "application/json", "apikey": EVOLUTION_API_KEY}
+
+HIST_MAX = int(os.getenv("PANEL_HIST_MAX", "60"))  # quantas entradas mostrar no painel
+DEFAULT_SYS = os.getenv(
+    "SYS_PROMPT",
+    "Você é um atendente objetivo e educado. Responda em pt-BR, curto e útil. "
+    "Se faltar dado essencial, faça 1 pergunta objetiva."
+)
+
+# -----------------------
+# APP
+# -----------------------
+app = Flask(__name__, static_folder="static", template_folder="templates")
+
+
+def _b(v) -> str:
     if v is None:
         return ""
     if isinstance(v, bytes):
         return v.decode("utf-8", errors="ignore")
     return str(v)
 
-@app.route("/")
-def index():
+
+def ai_enabled(numero: str) -> bool:
+    v = r.get(f"ai:enabled:{numero}")
+    if v is None:
+        return True
+    return _b(v).strip() == "1"
+
+
+def chat_last_preview(numero: str) -> str:
+    # pega 1 item mais recente
+    raw = r.lrange(f"hist:{numero}", 0, 0) or []
+    if not raw:
+        return ""
+    try:
+        it = json.loads(_b(raw[0]))
+        return (it.get("text") or "").strip()
+    except Exception:
+        return ""
+
+
+def chat_updated_at(numero: str) -> int:
+    # opcional: salva timestamp no webhook; se não existir, usa "agora" quando tem histórico
+    v = r.get(f"chat:{numero}:updated_at")
+    if v:
+        try:
+            return int(_b(v))
+        except Exception:
+            pass
+    # fallback: se existe histórico, retorna agora (aproximação)
+    has = r.lrange(f"hist:{numero}", 0, 0)
+    return int(time.time()) if has else 0
+
+
+def list_chats() -> List[Dict[str, Any]]:
+    nums = r.smembers("chats_ativos") or set()
+    chats = []
+    for n in nums:
+        numero = _b(n).strip()
+        if not numero:
+            continue
+        chats.append({
+            "numero": numero,
+            "ai_enabled": ai_enabled(numero),
+            "last_preview": chat_last_preview(numero),
+            "updated_at": chat_updated_at(numero),
+        })
+    # ordena mais recente primeiro
+    chats.sort(key=lambda x: x.get("updated_at") or 0, reverse=True)
+    return chats
+
+
+def load_history(numero: str, max_items: int = HIST_MAX) -> List[Dict[str, Any]]:
+    raw_items = r.lrange(f"hist:{numero}", 0, max_items - 1) or []
+    items = []
+    for raw in reversed(raw_items):  # inverte para ordem cronológica
+        try:
+            it = json.loads(_b(raw))
+            role = it.get("role") or "assistant"
+            text = (it.get("text") or "").strip()
+            ts = int(it.get("ts") or 0)
+            if text:
+                items.append({"role": role, "text": text, "ts": ts})
+        except Exception:
+            continue
+    return items
+
+
+def save_turn(numero: str, role: str, text: str):
+    it = {"role": role, "text": text, "ts": int(time.time())}
+    r.lpush(f"hist:{numero}", json.dumps(it, ensure_ascii=False))
+    # mantém um histórico maior no Redis
+    r.ltrim(f"hist:{numero}", 0, 399)
+    r.set(f"chat:{numero}:updated_at", str(int(time.time())), ex=60 * 60 * 24 * 30)
+    r.sadd("chats_ativos", numero)
+
+
+def send_whatsapp(numero: str, texto: str):
+    payload = {"instance": INSTANCE, "number": numero, "text": texto}
+    requests.post(EVOLUTION_SEND_URL, json=payload, headers=HEADERS, timeout=30)
+
+
+def build_debug_context(numero: str) -> str:
+    sys = _b(r.get("cfg:sys")).strip() or DEFAULT_SYS
+    hist = load_history(numero, max_items=12)
+    lines = ["SYS:", sys, "", "CHAT:"]
+    for it in hist[-8:]:
+        prefix = "U:" if it["role"] == "user" else "A:"
+        lines.append(f"{prefix} {it['text']}")
+    return "\n".join(lines).strip()
+
+
+# -----------------------
+# ROUTES UI
+# -----------------------
+@app.get("/")
+def home():
     return render_template("index.html")
 
-@app.route("/api/chats")
-def chats():
-    # smembers pode vir bytes
-    raw = r.smembers("chats_ativos") or []
-    chats = sorted(_b(x) for x in raw)
-    return jsonify(chats)
 
-@app.route("/api/historico/<numero>")
-def historico(numero):
-    mensagens = []
+# -----------------------
+# API
+# -----------------------
+@app.get("/api/chats")
+def api_chats():
+    return jsonify({"chats": list_chats()})
 
-    for mid in r.lrange(f"chat:{numero}:ids", 0, -1) or []:
-        if isinstance(mid, bytes):
-            mid = mid.decode("utf-8", errors="ignore")
 
-        msg = r.hgetall(f"msg:{mid}") or {}
-
-        cliente = msg.get("cliente", b"")
-        ia = msg.get("ia", b"")
-
-        if isinstance(cliente, bytes):
-            cliente = cliente.decode("utf-8", errors="ignore")
-        if isinstance(ia, bytes):
-            ia = ia.decode("utf-8", errors="ignore")
-
-        mensagens.append({"cliente": cliente, "ia": ia})
-
-    return jsonify(mensagens)
-
-@app.route("/api/config", methods=["GET"])
-def get_config():
-    def _b(v):
-        if v is None: return ""
-        return v.decode("utf-8", errors="ignore") if isinstance(v, bytes) else str(v)
-
-    # defaults (se vazio no redis)
-    default_sys = (
-        "Você é um atendente educado, objetivo e profissional.\n"
-        "Responda de forma clara, curta e útil.\n"
-        "Se precisar de dado faltante, faça 1 pergunta objetiva.\n"
-        "Não invente políticas, preços ou prazos; se não souber, diga que vai verificar."
-    )
-
-    default_sinais = "\n".join([
-        r"\bpreço\b", r"\bvalor\b", r"\borçamento\b", r"\bcatálogo\b",
-        r"\btem\b", r"\bdisponível\b", r"\bestoque\b",
-        r"\bfrete\b", r"\bentrega\b", r"\bpagamento\b",
-    ])
-
-    default_mem_prompt = (
-        "Tarefa: Atualize a MEMÓRIA do cliente com base no chat.\n"
-        "Regras:\n"
-        "- Escreva em pt-BR.\n"
-        "- Máximo 8 bullets.\n"
-        "- Inclua apenas fatos úteis para atendimento (objetivo, produto, status, pendências).\n"
-        "- NÃO inclua dados pessoais (endereço, CPF, CEP, e-mail, telefone).\n"
-        "- Foque só em interesse do cliente e status do atendimento.\n"
-        "- Se algo for incerto, não inclua.\n"
-        "- Limite ~{MEM_MAX_CHARS} caracteres.\n\n"
-        "INSTRUÇÕES:\n{instrucoes}\n\n"
-        "MEMÓRIA ATUAL:\n{mem_atual}\n\n"
-        "CHAT RECENTE:\n{chat_curto}\n\n"
-        "MENSAGEM ATUAL:\n{texto_cliente}\n\n"
-        "Responda SOMENTE com a nova MEMÓRIA (bullets)."
-    )
-
-    default_out_rules = (
-        "REGRAS DE SAÍDA:\n"
-        "- Responda em até 2 a 6 linhas.\n"
-        "- Se faltar dado essencial, faça 1 pergunta objetiva.\n"
-    )
+@app.get("/api/chat/<numero>")
+def api_chat(numero: str):
+    # garante chat em "ativos" caso exista histórico
+    if r.lrange(f"hist:{numero}", 0, 0):
+        r.sadd("chats_ativos", numero)
 
     return jsonify({
-        "sys": _b(r.get("cfg:sys") or default_sys),
-        "kb_text": _b(r.get("cfg:kb_text") or ""),
-        "sinais_text": _b(r.get("cfg:sinais_text") or default_sinais),
-        "mem_prompt": _b(r.get("cfg:mem_prompt") or default_mem_prompt),
-        "out_rules": _b(r.get("cfg:out_rules") or default_out_rules),
+        "numero": numero,
+        "ai_enabled": ai_enabled(numero),
+        "updated_at": chat_updated_at(numero),
+        "last_preview": chat_last_preview(numero),
+        "history": load_history(numero, HIST_MAX),
+        "debug_context": build_debug_context(numero),
     })
 
 
-@app.route("/api/config", methods=["POST"])
-def set_config():
+@app.post("/api/chat/<numero>/toggle")
+def api_toggle(numero: str):
+    cur = ai_enabled(numero)
+    newv = "0" if cur else "1"
+    r.set(f"ai:enabled:{numero}", newv)
+    return jsonify({"numero": numero, "ai_enabled": (newv == "1")})
+
+
+@app.post("/api/chat/<numero>/send")
+def api_send(numero: str):
     data = request.json or {}
+    text = (data.get("text") or "").strip()
+    if not text:
+        return jsonify({"ok": False, "error": "text vazio"}), 400
 
-    r.set("cfg:sys", (data.get("sys") or "").strip())
-    r.set("cfg:kb_text", (data.get("kb_text") or "").strip())
-    r.set("cfg:sinais_text", (data.get("sinais_text") or "").strip())
-    r.set("cfg:mem_prompt", (data.get("mem_prompt") or "").strip())
-    r.set("cfg:out_rules", (data.get("out_rules") or "").strip())
-
-    # compatibilidade: se quiser, espelha sys em ia:instrucoes
-    r.set("ia:instrucoes", (data.get("sys") or "").strip())
+    # envio manual (salva como "assistant" porque é sua mensagem no painel)
+    save_turn(numero, "assistant", text)
+    send_whatsapp(numero, text)
 
     return jsonify({"ok": True})
 
 
-@app.route("/api/clear/<numero>", methods=["POST"])
-def limpar_chat(numero):
-    key = f"chat:{numero}:ids"
-
-    for mid in r.lrange(key, 0, -1) or []:
-        mid = mid.decode("utf-8", errors="ignore") if isinstance(mid, bytes) else str(mid)
-        r.delete(f"msg:{mid}")
-
-    r.delete(key)
-    r.srem("chats_ativos", numero)
-
-    # opcional: limpar memoria/status/contador desse chat
-    r.delete(f"mem:{numero}")
-    r.delete(f"chat:{numero}:count")
-    r.delete(f"ai:enabled:{numero}")
-
+@app.post("/api/chat/<numero>/clear")
+def api_clear(numero: str):
+    r.delete(f"hist:{numero}")
+    r.set(f"chat:{numero}:updated_at", "0")
     return jsonify({"ok": True})
 
 
-# =====================
-# INSTRUÇÕES IA
-# =====================
-@app.route("/api/instrucoes", methods=["GET"])
-def carregar_instrucoes():
-    return jsonify({"texto": _b(r.get("ia:instrucoes") or "")})
+@app.get("/api/config")
+def api_config_get():
+    sys_txt = _b(r.get("cfg:sys")).strip()
+    if not sys_txt:
+        sys_txt = DEFAULT_SYS
+    return jsonify({"sys_prompt": sys_txt})
 
-@app.route("/api/instrucoes", methods=["POST"])
-def salvar_instrucoes():
+
+@app.post("/api/config")
+def api_config_set():
     data = request.json or {}
-    texto = (data.get("texto") or "").strip()
-    r.set("ia:instrucoes", texto)
+    sys_prompt = (data.get("sys_prompt") or "").strip()
+    if not sys_prompt:
+        sys_prompt = DEFAULT_SYS
+    r.set("cfg:sys", sys_prompt)
     return jsonify({"ok": True})
 
-# =====================
-# STATUS IA POR CHAT
-# =====================
-@app.route("/api/chat_status/<numero>", methods=["GET"])
-def chat_status_get(numero):
-    v = _b(r.get(f"ai:enabled:{numero}") or "")
-    # padrão: ativo
-    enabled = True if v == "" else (v == "1")
-    return jsonify({"enabled": enabled})
-
-@app.route("/api/chat_status/<numero>", methods=["POST"])
-def chat_status_set(numero):
-    data = request.json or {}
-    enabled = bool(data.get("enabled", True))
-    r.set(f"ai:enabled:{numero}", "1" if enabled else "0")
-    return jsonify({"ok": True, "enabled": enabled})
 
 if __name__ == "__main__":
-    print("🖥️ Backend UI rodando em http://localhost:8000")
-    app.run(host="0.0.0.0", port=8000, debug=False)
+    print("🧩 Painel rodando em http://0.0.0.0:%d" % PORT)
+    app.run(host="0.0.0.0", port=PORT, debug=False, use_reloader=False)

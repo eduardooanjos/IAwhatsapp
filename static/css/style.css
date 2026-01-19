@@ -1,37 +1,356 @@
-body { margin:0; font-family: Arial, sans-serif; background:#0b0f14; color:#e6edf3; }
-.wrap { display:grid; grid-template-columns: 360px 1fr; height:100vh; }
-.side { border-right:1px solid #1f2a37; padding:14px; overflow:auto; }
-.main { padding:14px; overflow:auto; }
+:root{
+  --bg:#0b1220;
+  --panel:#0f1b2d;
+  --panel2:#0c1626;
+  --text:#e6eefc;
+  --muted:#9bb0d0;
+  --line:#20334f;
+  --btn:#2a64ff;
+  --warn:#ffb020;
+  --danger:#ff4d4d;
+  --ok:#20d18a;
+  --shadow: 0 12px 30px rgba(0,0,0,.35);
+  --radius: 14px;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+}
 
-h2 { margin:8px 0 10px; font-size:16px; }
-.muted { color:#9aa4b2; font-size:12px; }
+*{box-sizing:border-box}
+html,body{height:100%}
+body{
+  margin:0;
+  font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+  background: radial-gradient(1100px 800px at 20% 0%, #142a52, var(--bg));
+  color: var(--text);
+}
 
-.card { background:#0f1620; border:1px solid #1f2a37; border-radius:10px; padding:10px; margin-bottom:12px; }
-textarea { width:100%; min-height:130px; background:#0b1220; color:#e6edf3; border:1px solid #223044; border-radius:8px; padding:10px; resize:vertical; }
+.app{
+  height:100%;
+  display:flex;
+}
 
-button { background:#1f6feb; border:none; color:#fff; padding:8px 10px; border-radius:8px; cursor:pointer; }
-button.secondary { background:#223044; }
-button.danger { background:#d73a49; }
-button:disabled { opacity:.6; cursor:not-allowed; }
+.sidebar{
+  width:360px;
+  background: linear-gradient(180deg, var(--panel), var(--panel2));
+  border-right: 1px solid var(--line);
+  padding:16px;
+  display:flex;
+  flex-direction:column;
+  gap:14px;
+}
 
-ul { list-style:none; padding:0; margin:0; }
-li.chat { display:flex; align-items:center; justify-content:space-between; gap:10px;
-          padding:10px; border-radius:10px; border:1px solid #1f2a37; background:#0f1620;
-          margin-bottom:8px; cursor:pointer; }
-li.chat.active { outline:2px solid #1f6feb; }
-.chat-left { display:flex; flex-direction:column; gap:4px; }
-.pill { font-size:11px; padding:3px 8px; border-radius:999px; border:1px solid #223044; width:max-content; }
-.pill.on { border-color:#1f6feb; color:#b9d4ff; }
-.pill.off { border-color:#d73a49; color:#ffb9c0; }
-.row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+.brand{
+  display:flex; align-items:center; gap:10px;
+  padding:10px 10px;
+  border:1px solid var(--line);
+  border-radius: var(--radius);
+}
+.dot{
+  width:12px;height:12px;border-radius:999px;
+  background: var(--btn);
+  box-shadow: 0 0 0 4px rgba(42,100,255,.18);
+}
+.title{font-weight:700}
+.sub{font-size:12px;color:var(--muted)}
 
-.topbar { display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:10px; }
-#titulo { font-size:16px; margin:0; }
-#msgs { background:#0f1620; border:1px solid #1f2a37; border-radius:10px; padding:10px; min-height:60vh; overflow:auto; }
-.msg { padding:10px; border-radius:10px; margin:8px 0; max-width: 780px; white-space: pre-wrap; }
-.cliente { background:#122033; border:1px solid #223044; }
-.ia { background:#101b12; border:1px solid #214027; }
-.small { font-size:12px; color:#9aa4b2; }
-.divider { height:1px; background:#1f2a37; margin:10px 0; }
-.switch { display:inline-flex; align-items:center; gap:8px; }
-.switch input { transform: scale(1.2); }
+.search{display:flex; gap:8px}
+.search input{
+  flex:1;
+  padding:10px 12px;
+  border-radius: 12px;
+  border:1px solid var(--line);
+  background:#0a1322;
+  color:var(--text);
+  outline:none;
+}
+.search input:focus{border-color:#315cff}
+.btn{
+  border:0;
+  border-radius: 12px;
+  padding:10px 12px;
+  background: var(--btn);
+  color:white;
+  cursor:pointer;
+  font-weight:650;
+}
+.btn:disabled{opacity:.45; cursor:not-allowed}
+.btn.ghost{
+  background: transparent;
+  border:1px solid var(--line);
+  color: var(--text);
+}
+.btn.warn{background: var(--warn); color:#1b1200}
+.btn.danger{background: var(--danger)}
+.tabs{display:flex; gap:8px}
+.tab{
+  flex:1;
+  border-radius: 12px;
+  border:1px solid var(--line);
+  background:#0a1322;
+  color:var(--text);
+  padding:10px 10px;
+  cursor:pointer;
+  font-weight:650;
+}
+.tab.active{
+  background: rgba(42,100,255,.18);
+  border-color: rgba(42,100,255,.35);
+}
+
+.tabpane{display:none; flex:1; overflow:auto}
+.tabpane.active{display:block}
+
+.pane-header{
+  display:flex; align-items:center; justify-content:space-between;
+  margin:10px 0 8px;
+}
+.pane-title{font-weight:750}
+.pill{
+  font-size:12px;
+  padding:4px 8px;
+  border-radius:999px;
+  border:1px solid var(--line);
+  color:var(--muted);
+  background:#0a1322;
+}
+
+.chatlist{display:flex; flex-direction:column; gap:8px}
+.chatitem{
+  border:1px solid var(--line);
+  background:#0a1322;
+  border-radius: var(--radius);
+  padding:10px 12px;
+  cursor:pointer;
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:10px;
+}
+.chatitem:hover{border-color: rgba(42,100,255,.35)}
+.chatitem.active{
+  background: rgba(42,100,255,.14);
+  border-color: rgba(42,100,255,.35);
+}
+.chat-left{display:flex; flex-direction:column; gap:4px}
+.chatnum{font-weight:750}
+.chatsub{font-size:12px;color:var(--muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:230px}
+.badge{
+  font-size:12px;
+  padding:4px 8px;
+  border-radius:999px;
+  border:1px solid var(--line);
+}
+.badge.ok{border-color:rgba(32,209,138,.5); color:var(--ok)}
+.badge.off{border-color:rgba(255,176,32,.55); color:var(--warn)}
+
+.card{
+  border:1px solid var(--line);
+  background:#0a1322;
+  border-radius: var(--radius);
+  padding:12px;
+  margin-bottom:10px;
+}
+.card-title{font-weight:750; margin-bottom:8px}
+textarea{
+  width:100%;
+  border-radius: 12px;
+  border:1px solid var(--line);
+  background:#07101e;
+  color:var(--text);
+  padding:10px 12px;
+  outline:none;
+  resize:vertical;
+}
+textarea:focus{border-color:#315cff}
+.row{display:flex; gap:8px; margin-top:10px}
+.hint{font-size:12px;color:var(--muted); margin-top:8px}
+code{font-family:var(--mono)}
+
+.ul{margin:0; padding-left:18px; color:var(--muted)}
+.chk{display:flex; gap:10px; align-items:center; color:var(--muted); margin:10px 0}
+.chk input{transform: scale(1.1)}
+
+.main{
+  flex:1;
+  display:flex;
+  flex-direction:column;
+  min-width: 520px;
+}
+.topbar{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  padding:16px 18px;
+  border-bottom:1px solid var(--line);
+  background: rgba(0,0,0,.18);
+  backdrop-filter: blur(10px);
+}
+.h1{font-size:18px;font-weight:800}
+.meta{font-size:12px;color:var(--muted)}
+.top-actions{display:flex; gap:10px}
+
+.chat{
+  flex:1;
+  display:flex;
+  flex-direction:column;
+  padding:16px 18px;
+  gap:12px;
+}
+.messages{
+  flex:1;
+  border:1px solid var(--line);
+  background: rgba(6,12,22,.7);
+  border-radius: var(--radius);
+  padding:12px;
+  overflow:auto;
+}
+.messages.empty{display:flex; align-items:center; justify-content:center}
+.emptyState{color:var(--muted); text-align:center}
+.emptyState .emoji{font-size:26px;margin-bottom:8px}
+
+.msg{
+  display:flex;
+  margin:10px 0;
+}
+.bubble{
+  max-width: 78%;
+  padding:10px 12px;
+  border-radius: 14px;
+  border:1px solid var(--line);
+  background:#0a1322;
+  box-shadow: 0 6px 14px rgba(0,0,0,.22);
+  white-space:pre-wrap;
+  word-break:break-word;
+}
+.msg.user{justify-content:flex-end}
+.msg.user .bubble{
+  background: rgba(42,100,255,.16);
+  border-color: rgba(42,100,255,.28);
+}
+.msg.assistant .bubble{
+  background: rgba(32,209,138,.10);
+  border-color: rgba(32,209,138,.25);
+}
+.bmeta{
+  font-size:11px;
+  color:var(--muted);
+  margin-top:6px;
+}
+
+.composer{
+  display:flex;
+  gap:10px;
+  align-items:flex-end;
+}
+.composer textarea{min-height:46px; max-height:160px}
+.footerhint{font-size:12px;color:var(--muted)}
+
+.modal{
+  position:fixed; inset:0;
+  background: rgba(0,0,0,.55);
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  padding:20px;
+}
+.modal.hidden{display:none}
+.modal-card{
+  width:min(720px, 100%);
+  border-radius: var(--radius);
+  background: #0a1322;
+  border:1px solid var(--line);
+  box-shadow: var(--shadow);
+}
+.modal-head{
+  display:flex; justify-content:space-between; align-items:center;
+  padding:12px 12px;
+  border-bottom:1px solid var(--line);
+}
+.modal-title{font-weight:800}
+.modal-body{padding:12px}
+
+/* trava a página: nada de scroll no body */
+html, body {
+  height: 100%;
+  overflow: hidden;
+}
+
+/* garante layout 100% altura da tela */
+.app {
+  height: 100vh;
+  overflow: hidden;
+}
+
+/* impede scroll na main inteira */
+.main {
+  height: 100%;
+  overflow: hidden;
+  min-height: 0; /* MUITO importante no flex */
+}
+
+/* a área do chat precisa "encolher" corretamente no flex */
+.chat {
+  flex: 1;
+  min-height: 0; /* MUITO importante no flex */
+}
+
+/* agora sim: só o container de mensagens rola */
+.messages {
+  flex: 1;
+  min-height: 0;       /* MUITO importante no flex */
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+/* balões menores */
+.bubble{
+  max-width: 72%;
+  padding: 7px 9px;      /* antes 10 12 */
+  border-radius: 12px;   /* antes 14 */
+  font-size: 13px;       /* menor */
+  line-height: 1.25;
+  box-shadow: none;      /* opcional: deixa mais clean */
+}
+
+/* menos espaço entre mensagens */
+.msg{
+  margin: 6px 0;         /* antes 10 */
+}
+
+/* meta menor */
+.bmeta{
+  font-size: 10px;
+  margin-top: 4px;
+}
+
+.messages::-webkit-scrollbar { width: 10px; }
+.messages::-webkit-scrollbar-track { background: transparent; }
+.messages::-webkit-scrollbar-thumb {
+  background: rgba(255,255,255,.12);
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
+.messages { scrollbar-gutter: stable; }
+
+/* INVERTER LADOS:
+   IA (assistant) na direita
+   Cliente (user) na esquerda
+*/
+
+/* cliente à esquerda */
+.msg.user { justify-content: flex-start; }
+.msg.user .bubble {}
+
+/* IA à direita */
+.msg.assistant { justify-content: flex-end; }
+
+/* (opcional) troca as cores pra combinar com a inversão */
+.msg.assistant .bubble{
+  background: rgba(42,100,255,.16);
+  border-color: rgba(42,100,255,.28);
+}
+.msg.user .bubble{
+  background: rgba(32,209,138,.10);
+  border-color: rgba(32,209,138,.25);
+}

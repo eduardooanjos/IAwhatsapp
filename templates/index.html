@@ -1,105 +1,124 @@
 <!doctype html>
-<html lang="pt-br">
+<html lang="pt-BR">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Painel Atendimento</title>
+  <title>Painel WhatsApp + IA</title>
   <link rel="stylesheet" href="/static/css/style.css" />
 </head>
-
 <body>
-  <div class="wrap">
-    <!-- SIDEBAR -->
-    <aside class="side">
-      <div class="card">
-        <h2>Configurações da IA</h2>
-        <div class="muted">Edite os blocos do prompt e salve. Isso vale para todos os chats.</div>
-      </div>
-
-      <div class="card">
-        <h2>1) Instruções (SYS)</h2>
-        <div class="muted">Como a IA deve se comportar.</div>
-        <div style="height:8px"></div>
-        <textarea id="cfg_sys" placeholder="Você é um atendente..."></textarea>
-      </div>
-
-      <div class="card">
-        <h2>2) Base de Conhecimento (KB)</h2>
-        <div class="muted">Formato simples: uma linha por item: <b>chave = texto</b> (ex.: horario = Atendemos...)</div>
-        <div style="height:8px"></div>
-        <textarea id="cfg_kb" placeholder="horario = Atendemos seg-sex 9h-18h
-garantia = Garantia de 90 dias..."></textarea>
-      </div>
-
-      <div class="card">
-        <h2>3) Sinais (gatilhos p/ atualizar memória)</h2>
-        <div class="muted">Uma linha por regex. Ex.: <b>\bpreço\b</b></div>
-        <div style="height:8px"></div>
-        <textarea id="cfg_sinais" placeholder="\bpreço\b
-\bvalor\b
-\borçamento\b"></textarea>
-      </div>
-
-      <div class="card">
-        <h2>4) Template: Atualizar Memória</h2>
-        <div class="muted">Esse prompt é usado na chamada curta que atualiza o resumo.</div>
-        <div style="height:8px"></div>
-        <textarea id="cfg_mem_prompt" placeholder="Tarefa: Atualize a MEMÓRIA..."></textarea>
-      </div>
-
-      <div class="card">
-        <h2>5) Regras de saída</h2>
-        <div class="muted">Bloco final para controlar formato da resposta.</div>
-        <div style="height:8px"></div>
-        <textarea id="cfg_out_rules" placeholder="REGRAS DE SAÍDA:
-- Responda em até 2 a 6 linhas..."></textarea>
-      </div>
-
-      <div class="card">
-        <div class="row">
-          <button onclick="salvarConfig()">Salvar tudo</button>
-          <button class="secondary" onclick="carregarConfig()">Recarregar</button>
+  <div class="app">
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="dot"></div>
+        <div>
+          <div class="title">Painel de Atendimento</div>
+          <div class="sub">Evolution + IA + Redis</div>
         </div>
-        <div class="small" id="statusSave" style="margin-top:8px;"></div>
       </div>
 
-      <div class="card">
-        <div class="row" style="justify-content:space-between;">
-          <div>
-            <h2 style="margin:0;">Chats</h2>
-            <div class="muted">Clique para abrir. IA por padrão: ativa.</div>
+      <div class="search">
+        <input id="searchInput" placeholder="Buscar chat (número)..." />
+        <button id="refreshBtn" class="btn ghost" title="Atualizar">↻</button>
+      </div>
+
+      <div class="tabs">
+        <button class="tab active" data-tab="tab-chats">Chats</button>
+        <button class="tab" data-tab="tab-settings">Config</button>
+        <button class="tab" data-tab="tab-help">Ajuda</button>
+      </div>
+
+      <section id="tab-chats" class="tabpane active">
+        <div class="pane-header">
+          <div class="pane-title">Conversas</div>
+          <div class="pill" id="chatCount">0</div>
+        </div>
+        <div id="chatList" class="chatlist"></div>
+      </section>
+
+      <section id="tab-settings" class="tabpane">
+        <div class="pane-header">
+          <div class="pane-title">Configurações</div>
+        </div>
+
+        <div class="card">
+          <div class="card-title">Prompt do sistema (global)</div>
+          <textarea id="sysPrompt" rows="8" placeholder="cfg:sys..."></textarea>
+          <div class="row">
+            <button id="saveSysBtn" class="btn">Salvar</button>
+            <button id="reloadSysBtn" class="btn ghost">Recarregar</button>
           </div>
-          <button class="secondary" onclick="carregarChats()">Atualizar</button>
+          <div class="hint">Salva em <code>cfg:sys</code> no Redis. O webhook usa isso no prompt.</div>
         </div>
-        <div style="height:10px"></div>
-        <ul id="lista"></ul>
-      </div>
 
-      <div class="small">
-        Dica: desative a IA em um chat para responder manualmente.
-      </div>
+        <div class="card">
+          <div class="card-title">Regras rápidas</div>
+          <label class="chk">
+            <input type="checkbox" id="autoRefresh" checked />
+            <span>Auto-atualizar chats (a cada 3s)</span>
+          </label>
+          <label class="chk">
+            <input type="checkbox" id="showSystemInDebug" />
+            <span>Mostrar detalhes do contexto no painel (cliente)</span>
+          </label>
+          <div class="hint">Obs: Debug no terminal é controlado no Python.</div>
+        </div>
+      </section>
+
+      <section id="tab-help" class="tabpane">
+        <div class="card">
+          <div class="card-title">Como funciona</div>
+          <ul class="ul">
+            <li>Webhook recebe mensagem → salva em Redis → se IA habilitada, gera resposta e envia.</li>
+            <li>Painel lista chats e exibe histórico em tempo real.</li>
+            <li>Você pode desabilitar IA por chat e responder manualmente.</li>
+          </ul>
+        </div>
+      </section>
     </aside>
 
-    <!-- MAIN -->
     <main class="main">
-      <div class="topbar">
-        <h1 id="titulo">Selecione um chat</h1>
-        <div class="row">
-          <label class="switch" title="Ativa/desativa a IA deste chat">
-            <input id="toggleIa" type="checkbox" checked disabled onchange="toggleIaChat()" />
-            <span id="toggleLabel" class="pill on">IA ativa</span>
-          </label>
-          <button class="danger" id="btnLimpar" onclick="limpar()" disabled>Limpar chat</button>
+      <header class="topbar">
+        <div class="top-left">
+          <div class="h1" id="activeTitle">Selecione um chat</div>
+          <div class="meta" id="activeMeta">—</div>
         </div>
-      </div>
 
-      <div id="msgs" class="card"></div>
+        <div class="top-actions">
+          <button id="toggleAiBtn" class="btn warn" disabled>IA: —</button>
+          <button id="clearBtn" class="btn ghost" disabled title="Limpar histórico local do chat (Redis)">Limpar</button>
+        </div>
+      </header>
 
-      <div class="divider"></div>
-      <div class="small">
-        Auto refresh a cada 2s.
-      </div>
+      <section class="chat">
+        <div id="messages" class="messages empty">
+          <div class="emptyState">
+            <div class="emoji">💬</div>
+            <div>Escolha um chat na esquerda pra ver o histórico.</div>
+          </div>
+        </div>
+
+        <div class="composer">
+          <textarea id="composerInput" rows="2" placeholder="Digite sua mensagem..." disabled></textarea>
+          <button id="sendBtn" class="btn" disabled>Enviar</button>
+        </div>
+
+        <div class="footerhint" id="composerHint">
+          Quando a IA estiver <b>desabilitada</b>, o envio manual é liberado.
+        </div>
+      </section>
     </main>
+  </div>
+
+  <!-- mini janela/modal -->
+  <div id="modal" class="modal hidden">
+    <div class="modal-card">
+      <div class="modal-head">
+        <div class="modal-title" id="modalTitle">Modal</div>
+        <button id="modalClose" class="btn ghost">✕</button>
+      </div>
+      <div id="modalBody" class="modal-body"></div>
+    </div>
   </div>
 
   <script src="/static/js/frontend.js"></script>

@@ -1,417 +1,232 @@
-import uuid
+import os
+import json
+import time
+import queue
 import threading
-import re
-from typing import List, Dict, Tuple, Optional
+from typing import Optional
 
-from flask import Flask, request
 import requests
+from flask import Flask, request
 from google import genai
-from redis_conn import r  # Redis client compatível (get/set/hset/hgetall/rpush/lrange/ltrim/sadd)
+from redis_conn import r
 
-# =====================
-# APP
-# =====================
-app = Flask(__name__)
+# -----------------------
+# CONFIG
+# -----------------------
+PORT = int(os.getenv("WEBHOOK_PORT", "5000"))
 
-# =====================
-# GEMINI
-# =====================
-client = genai.Client()
-
-# =====================
-# EVOLUTION
-# =====================
-INSTANCE = "secundario"
-EVOLUTION_API_KEY = "senha"
-
-EVOLUTION_SEND_URL = "http://localhost:8080/message/sendText/secundario"
-# EVOLUTION_SEND_URL = "http://evolution-api:8080/message/sendText/secundario"
-
+# Evolution
+INSTANCE = os.getenv("EVOLUTION_INSTANCE", "secundario")
+EVOLUTION_API_KEY = os.getenv("EVOLUTION_API_KEY", "senha")
+EVOLUTION_SEND_URL = os.getenv(
+    "EVOLUTION_SEND_URL",
+    f"http://localhost:8080/message/sendText/{INSTANCE}"
+)
 HEADERS = {"Content-Type": "application/json", "apikey": EVOLUTION_API_KEY}
 
-# =====================
-# CONFIG (tokens / debug)
-# =====================
-HIST_TURNS = 4              # quantos IDs recentes mandar como contexto
-STORE_MAX_IDS = 20          # quanto manter no Redis por chat
-MEM_UPDATE_EVERY = 5        # atualizar memória a cada N mensagens do cliente
-MEM_MAX_CHARS = 700         # limite do resumo por cliente
-KB_MAX_ITEMS = 3            # no máximo N trechos KB injetados no prompt
-KB_MAX_CHARS_EACH = 450     # limite de chars por trecho KB
-DEBUG_CONTEXT = True        # printa prompt/contexto no terminal
-RESPECT_CHAT_TOGGLE = True  # respeita ai:enabled:{numero} (padrão ativo)
+# Gemini
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+client = genai.Client()
 
-# =====================
-# UTIL
-# =====================
+# Ollama fallback
+OLLAMA_URL = os.getenv("OLLAMA_URL", "http://192.168.0.116:11434/api/generate")
+OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen3:8b")
+OLLAMA_TIMEOUT = int(os.getenv("OLLAMA_TIMEOUT", "45"))
+
+# Behavior
+HIST_TURNS = int(os.getenv("HIST_TURNS", "4"))          # turnos (U/A)
+STORE_TURNS = int(os.getenv("STORE_TURNS", "50"))       # quanto guardar (turnos)
+DEFAULT_SYS = os.getenv(
+    "SYS_PROMPT",
+    "Você é um atendente objetivo e educado. Responda em pt-BR, curto e útil. "
+    "Se faltar dado essencial, faça 1 pergunta objetiva."
+)
+DEBUG = os.getenv("DEBUG_CONTEXT", "0") == "1"
+
+# Fila/worker
+JOBS = queue.Queue(maxsize=2000)
+
+app = Flask(__name__)
+
+
 def _b(v) -> str:
-    """Converte bytes/None/str para str."""
     if v is None:
         return ""
     if isinstance(v, bytes):
         return v.decode("utf-8", errors="ignore")
     return str(v)
 
-def extrair_numero(msg: dict) -> Optional[str]:
-    key = msg.get("key", {})
+
+def ai_enabled(numero: str) -> bool:
+    v = r.get(f"ai:enabled:{numero}")
+    if v is None:
+        return True
+    return _b(v).strip() == "1"
+
+
+def extrair_numero(payload: dict) -> Optional[str]:
+    msg = payload.get("data", {}) or {}
+    key = msg.get("key", {}) or {}
     jid = key.get("remoteJidAlt") or key.get("remoteJid")
     if jid and "@s.whatsapp.net" in jid:
         return jid.replace("@s.whatsapp.net", "")
     return None
 
-def log_contexto(numero: str, prompt: str):
-    if not DEBUG_CONTEXT:
-        return
-    print("\n" + "=" * 70)
-    print(f"🧠 CONTEXTO ENVIADO PARA IA | cliente={numero} | chars={len(prompt)}")
-    print("=" * 70)
-    print(prompt)
-    print("=" * 70 + "\n")
-    # opcional:
-    # r.set(f"debug:last_prompt:{numero}", prompt, ex=3600)
 
-# =====================
-# CONFIG CARREGADA DO REDIS (UI)
-# =====================
-def cfg_get_sys() -> str:
-    """
-    Lê instruções globais da UI:
-    - preferencial: cfg:sys
-    - fallback: ia:instrucoes
-    - fallback final: default
-    """
-    sys_txt = _b(r.get("cfg:sys")).strip()
-    if not sys_txt:
-        sys_txt = _b(r.get("ia:instrucoes")).strip()
-
-    if not sys_txt:
-        sys_txt = (
-            "Você é um atendente educado, objetivo e profissional.\n"
-            "Responda de forma clara, curta e útil.\n"
-            "Se precisar de dado faltante, faça 1 pergunta objetiva.\n"
-            "Não invente políticas, preços ou prazos; se não souber, diga que vai verificar."
-        )
-    return sys_txt.strip()
-
-def cfg_get_out_rules() -> str:
-    out_rules = _b(r.get("cfg:out_rules")).strip()
-    if not out_rules:
-        out_rules = (
-            "REGRAS DE SAÍDA:\n"
-            "- Responda em até 2 a 6 linhas.\n"
-            "- Se faltar dado essencial, faça 1 pergunta objetiva.\n"
-        )
-    return out_rules.strip()
-
-def cfg_get_mem_prompt_template() -> str:
-    """
-    Template do prompt da chamada curta de memória.
-    Você pode editar na UI e salvar em cfg:mem_prompt.
-    """
-    tpl = _b(r.get("cfg:mem_prompt")).strip()
-    if not tpl:
-        tpl = (
-            "Tarefa: Atualize a MEMÓRIA do cliente com base no chat.\n"
-            "Regras:\n"
-            "- Escreva em pt-BR.\n"
-            "- Máximo 8 bullets.\n"
-            "- Inclua apenas fatos úteis para atendimento (objetivo, produto, status, pendências).\n"
-            "- NÃO inclua dados pessoais (endereço, CPF, CEP, e-mail, telefone).\n"
-            "- Foque só em interesse do cliente e status do atendimento.\n"
-            "- Se algo for incerto, não inclua.\n"
-            "- Limite ~{MEM_MAX_CHARS} caracteres.\n\n"
-            "INSTRUÇÕES:\n{instrucoes}\n\n"
-            "MEMÓRIA ATUAL:\n{mem_atual}\n\n"
-            "CHAT RECENTE:\n{chat_curto}\n\n"
-            "MENSAGEM ATUAL:\n{texto_cliente}\n\n"
-            "Responda SOMENTE com a nova MEMÓRIA (bullets)."
-        )
-    return tpl
-
-def cfg_get_sinais_patterns() -> List[str]:
-    """
-    Lê padrões regex (1 por linha) de cfg:sinais_text.
-    Se vazio, usa defaults.
-    """
-    raw = _b(r.get("cfg:sinais_text")).strip()
-    if not raw:
-        raw = "\n".join([
-            r"\bpreço\b", r"\bvalor\b", r"\borçamento\b", r"\bcatálogo\b",
-            r"\btem\b", r"\bdisponível\b", r"\bestoque\b",
-            r"\bfrete\b", r"\bentrega\b", r"\bpagamento\b",
-        ])
-    lines = []
-    for ln in raw.splitlines():
-        ln = ln.strip()
-        if not ln or ln.startswith("#"):
-            continue
-        lines.append(ln)
-    return lines
-
-def cfg_get_kb_items() -> Dict[str, str]:
-    """
-    Lê KB em formato texto (1 linha por item):
-      chave = texto
-
-    Salvo em cfg:kb_text.
-    """
-    kb_raw = _b(r.get("cfg:kb_text")).strip()
-    itens: Dict[str, str] = {}
-    if not kb_raw:
-        return itens
-
-    for ln in kb_raw.splitlines():
-        ln = ln.strip()
-        if not ln or ln.startswith("#"):
-            continue
-        if "=" not in ln:
-            continue
-        k, v = ln.split("=", 1)
-        k = k.strip()
-        v = v.strip()
-        if k and v:
-            itens[k] = v
-    return itens
-
-# =====================
-# KB: busca simples por palavra-chave
-# =====================
-def kb_buscar(texto: str, max_items: int = KB_MAX_ITEMS) -> List[Tuple[str, str]]:
-    texto_norm = (texto or "").lower()
-    itens = cfg_get_kb_items()
-
-    achados: List[Tuple[str, str]] = []
-    for chave, trecho in itens.items():
-        # match por palavra (chave)
-        pattern = r"\b" + re.escape(chave.lower()) + r"\b"
-        if re.search(pattern, texto_norm):
-            t = trecho.strip()
-            if len(t) > KB_MAX_CHARS_EACH:
-                t = t[:KB_MAX_CHARS_EACH].rstrip() + "…"
-            achados.append((chave, t))
-
-    return achados[:max_items]
-
-# =====================
-# HISTÓRICO curto (usa a mesma key da UI)
-# =====================
-def montar_contexto_curto(numero: str, turns: int = HIST_TURNS) -> str:
-    """
-    IMPORTANTe: para UI ver as mensagens, salvamos IDs em chat:{numero}:ids
-    e a UI deve ler disso também.
-    """
-    historico: List[str] = []
-    msg_ids = r.lrange(f"chat:{numero}:ids", -turns, -1) or []
-    for mid in msg_ids:
-        mid = _b(mid)
-        m = r.hgetall(f"msg:{mid}") or {}
-        cliente = _b(m.get("cliente")).strip()
-        ia = _b(m.get("ia")).strip()
-        if cliente:
-            historico.append(f"U: {cliente}")
-        if ia:
-            historico.append(f"A: {ia}")
-    return "\n".join(historico).strip()
-
-# =====================
-# MEMÓRIA resumida
-# =====================
-def get_memoria(numero: str) -> str:
-    mem = _b(r.get(f"mem:{numero}")).strip()
-    if mem and len(mem) > MEM_MAX_CHARS:
-        mem = mem[:MEM_MAX_CHARS].rstrip() + "…"
-    return mem
-
-def should_update_memoria(numero: str, texto_cliente: str) -> bool:
-    """
-    Atualiza memória quando:
-    - texto bate em algum padrão (sinais)
-    - ou periodicamente a cada N mensagens (chat:{numero}:count)
-    """
-    try:
-        count = int((_b(r.get(f"chat:{numero}:count") or "0")))
-    except Exception:
-        count = 0
-
-    texto = (texto_cliente or "").lower()
-    patterns = cfg_get_sinais_patterns()
-
-    # tenta compilar/rodar cada pattern
-    for p in patterns:
-        try:
-            if re.search(p, texto):
-                return True
-        except re.error:
-            # ignora regex inválida
-            continue
-
-    return (count > 0 and count % MEM_UPDATE_EVERY == 0)
-
-def atualizar_memoria(numero: str, instrucoes: str, mem_atual: str, chat_curto: str, texto_cliente: str) -> str:
-    """
-    Chamada curta para atualizar a memória.
-    Usa template configurável via cfg:mem_prompt.
-    """
-    tpl = cfg_get_mem_prompt_template()
-
-    prompt = tpl.format(
-        MEM_MAX_CHARS=MEM_MAX_CHARS,
-        instrucoes=instrucoes,
-        mem_atual=(mem_atual or "(vazia)"),
-        chat_curto=(chat_curto or "(sem contexto)"),
-        texto_cliente=texto_cliente
+def extrair_texto(payload: dict) -> Optional[str]:
+    msg = payload.get("data", {}) or {}
+    m = msg.get("message", {}) or {}
+    texto = (
+        m.get("conversation")
+        or (m.get("extendedTextMessage", {}) or {}).get("text")
     )
+    if isinstance(texto, str) and texto.strip():
+        return texto.strip()
+    return None
 
-    resp = client.models.generate_content(model="gemini-2.5-flash", contents=prompt)
-    novo = (getattr(resp, "text", None) or "").strip()
 
-    if len(novo) > MEM_MAX_CHARS:
-        novo = novo[:MEM_MAX_CHARS].rstrip() + "…"
+def save_turn(numero: str, role: str, text: str):
+    it = {"role": role, "text": text, "ts": int(time.time())}
+    r.lpush(f"hist:{numero}", json.dumps(it, ensure_ascii=False))
+    r.ltrim(f"hist:{numero}", 0, (STORE_TURNS * 2) - 1)
+    r.sadd("chats_ativos", numero)
+    r.set(f"chat:{numero}:updated_at", str(int(time.time())), ex=60 * 60 * 24 * 30)
 
-    return novo
 
-# =====================
-# CHAT TOGGLE (IA por chat) - padrão ativo
-# =====================
-def ia_habilitada_para_chat(numero: str) -> bool:
-    if not RESPECT_CHAT_TOGGLE:
-        return True
-    v = r.get(f"ai:enabled:{numero}")
-    if v is None:
-        return True
-    vv = _b(v).strip()
-    return vv == "1"
+def build_prompt(numero: str, texto_cliente: str) -> str:
+    sys = _b(r.get("cfg:sys")).strip() or DEFAULT_SYS
 
-# =====================
-# IA - resposta principal
-# =====================
-def responder_ia(numero: str, texto_cliente: str, msg_id: str):
-    try:
-        instrucoes = cfg_get_sys()
-
-        # contexto curto e memória
-        chat_curto = montar_contexto_curto(numero, HIST_TURNS)
-        mem = get_memoria(numero)
-
-        # KB opcional
-        kb_itens = kb_buscar(texto_cliente, KB_MAX_ITEMS)
-        kb_txt = ""
-        if kb_itens:
-            kb_txt = "\n".join([f"- {k}: {v}" for k, v in kb_itens])
-
-        out_rules = cfg_get_out_rules()
-
-        # prompt final
-        prompt_parts = [f"SYS:\n{instrucoes}"]
-        if mem:
-            prompt_parts.append(f"MEM:\n{mem}")
-        if chat_curto:
-            prompt_parts.append(f"CHAT:\n{chat_curto}")
-        if kb_txt:
-            prompt_parts.append(f"KB:\n{kb_txt}")
-
-        prompt_parts.append(out_rules)
-        prompt_parts.append(f"USER:\n{texto_cliente}")
-
-        prompt = "\n\n".join(prompt_parts)
-        log_contexto(numero, prompt)
-
-        response = client.models.generate_content(
-            model="gemini-2.5-flash",
-            contents=prompt
-        )
-
-        resposta = (getattr(response, "text", None) or "").strip() or "Não consegui responder agora."
-
-        # salva resposta
-        r.hset(f"msg:{msg_id}", "ia", resposta)
-
-        # envia WhatsApp
-        payload = {"instance": INSTANCE, "number": numero, "text": resposta}
-        requests.post(EVOLUTION_SEND_URL, json=payload, headers=HEADERS, timeout=30)
-
-        # incrementa contador do chat
+    raw_items = r.lrange(f"hist:{numero}", 0, (HIST_TURNS * 2) - 1) or []
+    items = []
+    for raw in reversed(raw_items):
         try:
-            r.incr(f"chat:{numero}:count")
+            it = json.loads(_b(raw))
+            items.append(it)
         except Exception:
-            pass
+            continue
+    ctx_lines = []
+    for it in items:
+        role = it.get("role")
+        txt = (it.get("text") or "").strip()
+        if not txt:
+            continue
 
-        # atualiza memória de vez em quando
-        if should_update_memoria(numero, texto_cliente):
+        if role == "user":
+            ctx_lines.append("U: " + txt)
+        else:
+            ctx_lines.append("A: " + txt)   # só pro prompt
+
+    parts = [f"SYS:\n{sys}"]
+    if ctx_lines:
+        parts.append("CHAT:\n" + "\n".join(ctx_lines))
+    parts.append("USER:\n" + texto_cliente)
+    return "\n\n".join(parts)
+
+
+def gerar_ollama(prompt: str) -> str:
+    resp = requests.post(
+        OLLAMA_URL,
+        json={"model": OLLAMA_MODEL, "prompt": prompt, "stream": False},
+        timeout=OLLAMA_TIMEOUT,
+    )
+    resp.raise_for_status()
+    data = resp.json() or {}
+    return (data.get("response") or "").strip()
+
+
+def send_whatsapp(numero: str, texto: str):
+    payload = {"instance": INSTANCE, "number": numero, "text": texto}
+    requests.post(EVOLUTION_SEND_URL, json=payload, headers=HEADERS, timeout=30)
+
+
+def worker():
+    while True:
+        job = JOBS.get()
+        if job is None:
+            break
+        try:
+            numero = job["numero"]
+            texto = job["texto"]
+
+            # se IA desligada no meio do caminho, não responde
+            if not ai_enabled(numero):
+                JOBS.task_done()
+                continue
+
+            prompt = build_prompt(numero, texto)
+            if DEBUG:
+                print("\n" + "=" * 70)
+                print(f"PROMPT -> {numero} chars={len(prompt)}")
+                print(prompt)
+                print("=" * 70 + "\n")
+
+            resposta = ""
+            # Gemini
             try:
-                mem_novo = atualizar_memoria(numero, instrucoes, mem, chat_curto, texto_cliente)
-                if mem_novo:
-                    r.set(f"mem:{numero}", mem_novo)
+                resp = client.models.generate_content(model=GEMINI_MODEL, contents=prompt)
+                resposta = (getattr(resp, "text", None) or "").strip()
             except Exception as e:
-                print("⚠️ Falha ao atualizar memória:", e)
+                print("⚠️ Gemini falhou, tentando Ollama:", e)
 
-        print(f"🤖 IA -> {numero}: {resposta}")
+            # fallback
+            if not resposta:
+                try:
+                    resposta = gerar_ollama(prompt)
+                except Exception as e:
+                    print("❌ Ollama falhou:", e)
+                    resposta = "Tive um problema agora e não consegui responder. Pode tentar novamente?"
 
-    except Exception as e:
-        print("❌ Erro Gemini:", e)
+            save_turn(numero, "assistant", resposta)
+            send_whatsapp(numero, resposta)
+            print(f"🤖 {numero}: {resposta}")
 
-# =====================
-# WEBHOOK
-# =====================
+        except Exception as e:
+            print("❌ Erro worker:", e)
+        finally:
+            JOBS.task_done()
+
+
+threading.Thread(target=worker, daemon=True).start()
+
+
 @app.route("/webhook", methods=["POST"])
 def webhook():
-    data = request.json or {}
+    payload = request.json or {}
 
-    if data.get("event") != "messages.upsert":
+    if payload.get("event") != "messages.upsert":
         return "ok", 200
 
-    msg = data.get("data", {})
-    key = msg.get("key", {})
+    msg = payload.get("data", {}) or {}
+    key = msg.get("key", {}) or {}
 
     if msg.get("messageStubType"):
         return "ok", 200
-
     if key.get("fromMe"):
         return "ok", 200
 
-    numero = extrair_numero(msg)
-    if not numero:
+    numero = extrair_numero(payload)
+    texto = extrair_texto(payload)
+
+    if not numero or not texto:
         return "ok", 200
 
-    texto = (
-        msg.get("message", {}).get("conversation")
-        or msg.get("message", {}).get("extendedTextMessage", {}).get("text")
-    )
-
-    if not isinstance(texto, str) or not texto.strip():
-        return "ok", 200
-
-    texto = texto.strip()
+    # salva sempre a mensagem do cliente no histórico
+    save_turn(numero, "user", texto)
     print(f"📩 {numero}: {texto}")
 
-    # registra chat ativo
-    r.sadd("chats_ativos", numero)
-
-    msg_id = str(uuid.uuid4())
-
-    # salva mensagem
-    r.hset(f"msg:{msg_id}", mapping={"cliente": texto, "ia": ""})
-
-    # salva ID na lista correta (compatível com UI ajustada para chat:{numero}:ids)
-    r.rpush(f"chat:{numero}:ids", msg_id)
-    r.ltrim(f"chat:{numero}:ids", -STORE_MAX_IDS, -1)
-
-    # respeita toggle por chat (padrão ativo)
-    if not ia_habilitada_para_chat(numero):
-        print(f"⏸️ IA desativada para {numero} (ai:enabled:{numero}=0). Não respondendo.")
+    # se IA OFF, não responde (mas o painel pode responder manualmente)
+    if not ai_enabled(numero):
+        print(f"⏸️ IA OFF para {numero}")
         return "ok", 200
 
-    threading.Thread(
-        target=responder_ia,
-        args=(numero, texto, msg_id),
-        daemon=True
-    ).start()
-
+    # enfileira resposta
+    try:
+        JOBS.put_nowait({"numero": numero, "texto": texto})
+    except queue.Full:
+        print("⚠️ Fila cheia; não respondi.")
     return "ok", 200
 
-# =====================
-# START
-# =====================
+
 if __name__ == "__main__":
-    print("🤖 Webhook Gemini rodando em /webhook")
-    app.run(host="0.0.0.0", port=5000, debug=False, use_reloader=False)
+    print("🤖 Webhook rodando em /webhook")
+    app.run(host="0.0.0.0", port=PORT, debug=False, use_reloader=False)
