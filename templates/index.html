@@ -24,6 +24,7 @@
 
       <div class="tabs">
         <button class="tab active" data-tab="tab-chats">Chats</button>
+         <button class="tab" data-tab="tab-products">Produtos</button>
         <button class="tab" data-tab="tab-settings">Config</button>
         <button class="tab" data-tab="tab-help">Ajuda</button>
       </div>
@@ -36,10 +37,35 @@
         <div id="chatList" class="chatlist"></div>
       </section>
 
+          <section id="tab-products" class="tabpane">
+      <div class="pane-header">
+        <div class="pane-title">Produtos</div>
+        <div style="display:flex; gap:8px; align-items:center;">
+          <div class="pill" id="prodCount">0</div>
+          <button id="newProdBtn" class="btn">+ Novo</button>
+        </div>
+      </div>
+
+        <div class="card">
+          <div class="row" style="margin:0;">
+            <input id="prodSearch" placeholder="Buscar por nome ou SKU..." style="flex:1;" />
+            <button id="prodRefreshBtn" class="btn ghost">↻</button>
+          </div>
+          <label class="chk" style="margin-bottom:0;">
+            <input type="checkbox" id="prodOnlyActive" checked />
+            <span>Mostrar apenas ativos</span>
+          </label>
+        </div>
+
+        <div id="prodList" class="prodlist"></div>
+      </section>
+
+
       <section id="tab-settings" class="tabpane">
         <div class="pane-header">
           <div class="pane-title">Configurações</div>
         </div>
+        
 
         <div class="card">
           <div class="card-title">Prompt do sistema (global)</div>

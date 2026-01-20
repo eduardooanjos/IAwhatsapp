@@ -25,6 +25,14 @@ const els = {
   modalTitle: document.getElementById("modalTitle"),
   modalBody: document.getElementById("modalBody"),
   modalClose: document.getElementById("modalClose"),
+
+    // Produtos
+  prodCount: document.getElementById("prodCount"),
+  prodList: document.getElementById("prodList"),
+  prodSearch: document.getElementById("prodSearch"),
+  prodRefreshBtn: document.getElementById("prodRefreshBtn"),
+  prodOnlyActive: document.getElementById("prodOnlyActive"),
+  newProdBtn: document.getElementById("newProdBtn"),
 };
 
 let LAST_CHAT = null;
@@ -35,6 +43,7 @@ let STATE = {
   history: [],
   autoTimer: null,
   showDebug: false,
+  products: [],
 };
 
 function isNearBottom(el, thresholdPx = 30){
@@ -47,7 +56,7 @@ function keepScrollIfNotNearBottom(el, wasNearBottom){
     el.scrollTop = el.scrollHeight;
   }
 }
-  
+
 
 function fmtTime(ts){
   if(!ts) return "—";
@@ -347,12 +356,207 @@ function wire(){
     STATE.showDebug = els.showSystemInDebug.checked;
   });
 
+  // Produtos
+  els.prodRefreshBtn.addEventListener("click", loadProducts);
+  els.prodSearch.addEventListener("input", ()=>{
+    // debounce simples
+    clearTimeout(window.__prodT);
+    window.__prodT = setTimeout(loadProducts, 250);
+  });
+  els.prodOnlyActive.addEventListener("change", loadProducts);
+  els.newProdBtn.addEventListener("click", ()=> openProductModal("create"));
+
+
   setTabs();
 }
+
+async function loadProducts(){
+  const q = (els.prodSearch.value || "").trim();
+  const active = els.prodOnlyActive.checked ? "1" : "0";
+  const data = await apiGet(`/api/products?q=${encodeURIComponent(q)}&active=${active}`);
+  STATE.products = data.items || [];
+  renderProducts();
+}
+
+function money(v){
+  try{ return Number(v).toFixed(2); } catch { return String(v); }
+}
+
+function renderProducts(){
+  const items = STATE.products || [];
+  els.prodCount.textContent = String(items.length);
+  els.prodList.innerHTML = "";
+
+  if(items.length === 0){
+    els.prodList.innerHTML = `<div class="card" style="color:var(--muted);">Nenhum produto encontrado.</div>`;
+    return;
+  }
+
+  items.forEach(p=>{
+    const div = document.createElement("div");
+    div.className = "proditem";
+
+    const badge = p.active ? `<span class="badge ok">Ativo</span>` : `<span class="badge off">Inativo</span>`;
+
+    div.innerHTML = `
+      <div class="prod-left">
+        <div class="prod-name">${escapeHtml(p.name || "")}</div>
+        <div class="prod-sku">SKU: ${escapeHtml(p.sku || "")} · ${badge}</div>
+        <div class="prod-meta">
+          <span>Preço: R$ ${money(p.price)}</span>
+          <span>Estoque: ${p.stock}</span>
+        </div>
+      </div>
+      <div class="pbtns">
+        <button class="btn ghost smallbtn" data-act="stock" data-id="${p.id}">Estoque</button>
+        <button class="btn ghost smallbtn" data-act="edit" data-id="${p.id}">Editar</button>
+        <button class="btn warn smallbtn" data-act="toggle" data-id="${p.id}">
+          ${p.active ? "Desativar" : "Ativar"}
+        </button>
+      </div>
+    `;
+
+    div.querySelectorAll("button").forEach(btn=>{
+      btn.addEventListener("click", ()=> handleProdAction(btn.dataset.act, Number(btn.dataset.id)));
+    });
+
+    els.prodList.appendChild(div);
+  });
+}
+
+function productById(id){
+  return (STATE.products || []).find(x => Number(x.id) === Number(id));
+}
+
+function openProductModal(mode, product){
+  const isEdit = mode === "edit";
+  const p = product || { sku:"", name:"", price:0, stock:0, active:true };
+
+  openModal(isEdit ? "Editar produto" : "Novo produto", `
+    <div class="card" style="margin:0;">
+      <div class="card-title">${isEdit ? "Atualize os campos" : "Preencha os campos"}</div>
+
+      <label class="hint">SKU</label>
+      <input id="mSku" value="${escapeHtml(p.sku)}" ${isEdit ? "disabled" : ""} style="width:100%; padding:10px 12px; border-radius:12px; border:1px solid var(--line); background:#07101e; color:var(--text); outline:none;"/>
+
+      <div style="height:10px;"></div>
+
+      <label class="hint">Nome</label>
+      <input id="mName" value="${escapeHtml(p.name)}" style="width:100%; padding:10px 12px; border-radius:12px; border:1px solid var(--line); background:#07101e; color:var(--text); outline:none;"/>
+
+      <div style="height:10px;"></div>
+
+      <div style="display:flex; gap:10px;">
+        <div style="flex:1;">
+          <label class="hint">Preço</label>
+          <input id="mPrice" type="number" step="0.01" value="${Number(p.price || 0)}"
+            style="width:100%; padding:10px 12px; border-radius:12px; border:1px solid var(--line); background:#07101e; color:var(--text); outline:none;"/>
+        </div>
+        <div style="flex:1;">
+          <label class="hint">Estoque</label>
+          <input id="mStock" type="number" step="1" value="${Number(p.stock || 0)}"
+            style="width:100%; padding:10px 12px; border-radius:12px; border:1px solid var(--line); background:#07101e; color:var(--text); outline:none;"/>
+        </div>
+      </div>
+
+      <label class="chk" style="margin:12px 0 0;">
+        <input id="mActive" type="checkbox" ${p.active ? "checked" : ""}/>
+        <span>Ativo</span>
+      </label>
+
+      <div class="row" style="justify-content:flex-end;">
+        <button class="btn ghost" id="mCancel">Cancelar</button>
+        <button class="btn" id="mSave">${isEdit ? "Salvar" : "Cadastrar"}</button>
+      </div>
+    </div>
+  `);
+
+  document.getElementById("mCancel").onclick = closeModal;
+  document.getElementById("mSave").onclick = async ()=>{
+    const sku = (document.getElementById("mSku").value || "").trim();
+    const name = (document.getElementById("mName").value || "").trim();
+    const price = Number(document.getElementById("mPrice").value || 0);
+    const stock = parseInt(document.getElementById("mStock").value || "0", 10);
+    const active = document.getElementById("mActive").checked;
+
+    if(!sku || !name){
+      openModal("Erro", `<div style="color:var(--muted);">SKU e Nome são obrigatórios.</div>`);
+      return;
+    }
+
+    try{
+      if(isEdit){
+        await apiPost(`/api/products/${p.id}/update`, { name, price, stock, active });
+      } else {
+        await apiPost(`/api/products/create`, { sku, name, price, stock, active });
+      }
+      closeModal();
+      await loadProducts();
+    } catch(e){
+      openModal("Erro", `<div style="color:var(--muted);">${escapeHtml(String(e.message || e))}</div>`);
+    }
+  };
+}
+
+function openStockModal(product){
+  const p = product;
+  openModal("Ajustar estoque", `
+    <div class="card" style="margin:0;">
+      <div class="card-title">${escapeHtml(p.name)} <span style="color:var(--muted); font-weight:600;">(SKU: ${escapeHtml(p.sku)})</span></div>
+      <div class="hint">Estoque atual: <b>${p.stock}</b></div>
+
+      <div style="display:flex; gap:10px; margin-top:10px;">
+        <button class="btn ghost" id="mDec">-1</button>
+        <input id="mNewStock" type="number" value="${p.stock}"
+          style="flex:1; padding:10px 12px; border-radius:12px; border:1px solid var(--line); background:#07101e; color:var(--text); outline:none;"/>
+        <button class="btn ghost" id="mInc">+1</button>
+      </div>
+
+      <div class="row" style="justify-content:flex-end;">
+        <button class="btn ghost" id="mCancel">Cancelar</button>
+        <button class="btn" id="mSave">Salvar</button>
+      </div>
+    </div>
+  `);
+
+  const inp = document.getElementById("mNewStock");
+  document.getElementById("mDec").onclick = ()=> inp.value = String(Number(inp.value||0) - 1);
+  document.getElementById("mInc").onclick = ()=> inp.value = String(Number(inp.value||0) + 1);
+
+  document.getElementById("mCancel").onclick = closeModal;
+  document.getElementById("mSave").onclick = async ()=>{
+    const stock = parseInt(inp.value || "0", 10);
+    await apiPost(`/api/products/${p.id}/stock`, { stock });
+    closeModal();
+    await loadProducts();
+  };
+}
+
+async function handleProdAction(action, id){
+  const p = productById(id);
+  if(!p) return;
+
+  if(action === "edit"){
+    openProductModal("edit", p);
+    return;
+  }
+  if(action === "stock"){
+    openStockModal(p);
+    return;
+  }
+  if(action === "toggle"){
+    await apiPost(`/api/products/${id}/toggle`, {});
+    await loadProducts();
+    return;
+  }
+}
+
 
 (async function init(){
   wire();
   await loadSysPrompt();
   await loadChats();
+  await loadProducts();  // NOVO
   setAutoRefresh();
 })();
+

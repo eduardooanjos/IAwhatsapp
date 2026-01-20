@@ -5,8 +5,11 @@ from typing import Dict, Any, List
 
 import requests
 from flask import Flask, jsonify, request, render_template
-
-from redis_conn import r  # precisa ter get/set/lrange/ltrim/lpush/smembers/sadd/delete
+from db import db, init_db
+from models import Product
+from datetime import datetime
+from sqlalchemy import or_
+from redis_conn import r  
 
 # -----------------------
 # CONFIG
@@ -31,7 +34,12 @@ DEFAULT_SYS = os.getenv(
 # -----------------------
 # APP
 # -----------------------
-app = Flask(__name__, static_folder="static", template_folder="templates")
+app = Flask(__name__)
+init_db(app)
+
+# crie as tabelas uma vez (dev)
+with app.app_context():
+    db.create_all()
 
 
 def _b(v) -> str:
@@ -209,6 +217,88 @@ def api_config_set():
         sys_prompt = DEFAULT_SYS
     r.set("cfg:sys", sys_prompt)
     return jsonify({"ok": True})
+
+@app.get("/api/products")
+def api_products_list():
+    q = (request.args.get("q") or "").strip()
+    only_active = (request.args.get("active") or "1").strip() == "1"
+
+    query = Product.query
+    if only_active:
+        query = query.filter(Product.active.is_(True))
+
+    if q:
+        like = f"%{q}%"
+        query = query.filter(or_(Product.name.ilike(like), Product.sku.ilike(like)))
+
+    items = query.order_by(Product.updated_at.desc()).limit(300).all()
+    return jsonify({
+        "items": [{
+            "id": p.id,
+            "sku": p.sku,
+            "name": p.name,
+            "price": float(p.price),
+            "stock": p.stock,
+            "active": p.active,
+            "updated_at": int(p.updated_at.timestamp()),
+        } for p in items]
+    })
+
+@app.post("/api/products/create")
+def api_products_create():
+    data = request.json or {}
+    sku = (data.get("sku") or "").strip()
+    name = (data.get("name") or "").strip()
+    price = data.get("price", 0)
+    stock = int(data.get("stock", 0))
+    active = bool(data.get("active", True))
+
+    if not sku or not name:
+        return jsonify({"ok": False, "error": "sku e name são obrigatórios"}), 400
+
+    if Product.query.filter_by(sku=sku).first():
+        return jsonify({"ok": False, "error": "sku já existe"}), 409
+
+    p = Product(sku=sku, name=name, price=price, stock=stock, active=active, updated_at=datetime.utcnow())
+    db.session.add(p)
+    db.session.commit()
+    return jsonify({"ok": True, "id": p.id})
+
+@app.post("/api/products/<int:pid>/update")
+def api_products_update(pid: int):
+    p = Product.query.get(pid)
+    if not p:
+        return jsonify({"ok": False, "error": "produto não encontrado"}), 404
+
+    data = request.json or {}
+    p.name = (data.get("name") or p.name).strip()
+    p.price = data.get("price", p.price)
+    p.stock = int(data.get("stock", p.stock))
+    p.active = bool(data.get("active", p.active))
+    p.updated_at = datetime.utcnow()
+    db.session.commit()
+    return jsonify({"ok": True})
+
+@app.post("/api/products/<int:pid>/toggle")
+def api_products_toggle(pid: int):
+    p = Product.query.get(pid)
+    if not p:
+        return jsonify({"ok": False, "error": "produto não encontrado"}), 404
+    p.active = not bool(p.active)
+    p.updated_at = datetime.utcnow()
+    db.session.commit()
+    return jsonify({"ok": True, "active": p.active})
+
+@app.post("/api/products/<int:pid>/stock")
+def api_products_stock(pid: int):
+    p = Product.query.get(pid)
+    if not p:
+        return jsonify({"ok": False, "error": "produto não encontrado"}), 404
+    data = request.json or {}
+    p.stock = int(data.get("stock", p.stock))
+    p.updated_at = datetime.utcnow()
+    db.session.commit()
+    return jsonify({"ok": True, "stock": p.stock})
 
 
 if __name__ == "__main__":
