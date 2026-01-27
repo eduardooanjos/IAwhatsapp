@@ -2,82 +2,121 @@ import os
 from dotenv import load_dotenv
 from sqlalchemy import create_engine, text
 
+# =====================
+# CONFIG
+# =====================
 load_dotenv()
 
-DB_URL = os.getenv("BOT_DATABASE_URL")
-if not DB_URL:
-    raise RuntimeError("Defina BOT_DATABASE_URL no .env ou no ambiente.")
+DATABASE_URL = (
+    os.getenv("DATABASE_URL")
+    or os.getenv("BOT_DATABASE_URL")
+)
 
-engine = create_engine(DB_URL, future=True)
+if not DATABASE_URL:
+    raise RuntimeError("Defina DATABASE_URL (ou BOT_DATABASE_URL) no seu .env")
 
-def ensure_table():
-    # cria tabela se não existir (dev-friendly)
+engine = create_engine(DATABASE_URL, future=True)
+
+# =====================
+# QUERIES
+# =====================
+def listar(limit: int = 50):
     sql = text("""
-    CREATE TABLE IF NOT EXISTS products (
-      id SERIAL PRIMARY KEY,
-      sku VARCHAR(64) UNIQUE NOT NULL,
-      name VARCHAR(200) NOT NULL,
-      description TEXT NOT NULL DEFAULT '',
-      price NUMERIC(12,2) NOT NULL DEFAULT 0,
-      stock INT NOT NULL DEFAULT 0,
-      active BOOLEAN NOT NULL DEFAULT TRUE,
-      updated_at TIMESTAMP NOT NULL DEFAULT NOW()
-    );
+        SELECT id, nome, preco, estoque, created_at
+        FROM produtos
+        ORDER BY id DESC
+        LIMIT :limit
     """)
     with engine.begin() as conn:
-        conn.execute(sql)
+        rows = conn.execute(sql, {"limit": limit}).mappings().all()
+    return rows
 
-def insert_product(sku: str, name: str, description: str, price: float, stock: int, active: bool):
+def buscar_por_id(prod_id: int):
     sql = text("""
-      INSERT INTO products (sku, name, description, price, stock, active, updated_at)
-      VALUES (:sku, :name, :description, :price, :stock, :active, NOW())
-      RETURNING id;
+        SELECT id, nome, descricao, preco, estoque, created_at
+        FROM produtos
+        WHERE id = :id
     """)
     with engine.begin() as conn:
-        pid = conn.execute(sql, {
-            "sku": sku,
-            "name": name,
-            "description": description or "",
-            "price": price,
-            "stock": stock,
-            "active": active
-        }).scalar_one()
-        return pid
+        row = conn.execute(sql, {"id": prod_id}).mappings().first()
+    return row
+
+def buscar_por_nome(termo: str, limit: int = 20):
+    sql = text("""
+        SELECT id, nome, preco, estoque
+        FROM produtos
+        WHERE nome ILIKE :q
+        ORDER BY nome
+        LIMIT :limit
+    """)
+    with engine.begin() as conn:
+        rows = conn.execute(sql, {"q": f"%{termo}%", "limit": limit}).mappings().all()
+    return rows
 
 def main():
-    print("=== Cadastro de Produtos (Postgres) ===\n")
-    ensure_table()
+    print("=== Consulta de Produtos (Postgres) ===")
+    print("Opções:")
+    print("  1) Listar últimos")
+    print("  2) Buscar por ID")
+    print("  3) Buscar por Nome")
+    print("  ENTER para sair")
 
     while True:
-        sku = input("SKU (vazio sai)> ").strip()
-        if not sku:
+        op = input("\nEscolha: ").strip()
+        if not op:
+            print("Saindo.")
             break
-        name = input("Nome> ").strip()
-        description = input("Descrição (opcional)> ").strip()
 
-        price_str = input("Preço (ex: 12.90)> ").strip().replace(",", ".")
-        stock_str = input("Estoque (ex: 10)> ").strip()
+        if op == "1":
+            try:
+                lim = input("Limite (padrão 50): ").strip()
+                lim = int(lim) if lim else 50
+            except ValueError:
+                lim = 50
 
-        active_str = input("Ativo? (s/n) [s]> ").strip().lower()
-        active = (active_str != "n")
+            rows = listar(lim)
+            if not rows:
+                print("Nenhum produto encontrado.")
+                continue
 
-        try:
-            price = float(price_str) if price_str else 0.0
-        except:
-            print("Preço inválido.\n")
-            continue
+            for r in rows:
+                print(f"- [{r['id']}] {r['nome']} | R$ {r['preco']} | estoque={r['estoque']} | {r['created_at']}")
 
-        try:
-            stock = int(stock_str) if stock_str else 0
-        except:
-            print("Estoque inválido.\n")
-            continue
+        elif op == "2":
+            try:
+                prod_id = int(input("ID: ").strip())
+            except ValueError:
+                print("ID inválido.")
+                continue
 
-        try:
-            pid = insert_product(sku, name, description, price, stock, active)
-            print(f"✅ Cadastrado! id={pid}\n")
-        except Exception as e:
-            print(f"❌ Erro ao cadastrar: {e}\n")
+            r = buscar_por_id(prod_id)
+            if not r:
+                print("Não encontrado.")
+                continue
+
+            print(f"\nID: {r['id']}")
+            print(f"Nome: {r['nome']}")
+            print(f"Descrição: {r['descricao']}")
+            print(f"Preço: R$ {r['preco']}")
+            print(f"Estoque: {r['estoque']}")
+            print(f"Criado em: {r['created_at']}")
+
+        elif op == "3":
+            termo = input("Parte do nome: ").strip()
+            if not termo:
+                print("Termo vazio.")
+                continue
+
+            rows = buscar_por_nome(termo)
+            if not rows:
+                print("Nenhum produto encontrado.")
+                continue
+
+            for r in rows:
+                print(f"- [{r['id']}] {r['nome']} | R$ {r['preco']} | estoque={r['estoque']}")
+
+        else:
+            print("Opção inválida.")
 
 if __name__ == "__main__":
     main()

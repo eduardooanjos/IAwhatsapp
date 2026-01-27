@@ -1,78 +1,104 @@
 import os
+from pathlib import Path
+from decimal import Decimal, InvalidOperation
+
+from dotenv import load_dotenv
 from sqlalchemy import create_engine, text
 
-URL = os.getenv("DATABASE_URL", "postgresql+psycopg2://user:password@localhost:5432/mydatabase")
+# =====================
+# CONFIG
+# =====================
+env_path = Path(__file__).resolve().parent / ".env"
+load_dotenv(env_path)
 
-engine = create_engine(URL, future=True)
+DATABASE_URL = os.getenv("DATABASE_URL")
+if not DATABASE_URL:
+    raise RuntimeError("Defina DATABASE_URL no seu .env")
+
+engine = create_engine(DATABASE_URL, future=True)
+
+# =====================
+# DB
+# =====================
+DDL = """
+CREATE TABLE IF NOT EXISTS produtos (
+  id BIGSERIAL PRIMARY KEY,
+  nome        TEXT NOT NULL,
+  descricao   TEXT,
+  preco       NUMERIC(12,2) NOT NULL DEFAULT 0,
+  estoque     INTEGER NOT NULL DEFAULT 0,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS ix_produtos_nome ON produtos (nome);
+"""
 
 def ensure_table():
-    # cria tabela se não existir (dev-friendly)
-    sql = text("""
-    CREATE TABLE IF NOT EXISTS products (
-      id SERIAL PRIMARY KEY,
-      sku VARCHAR(64) UNIQUE NOT NULL,
-      name VARCHAR(200) NOT NULL,
-      description TEXT NOT NULL DEFAULT '',
-      price NUMERIC(12,2) NOT NULL DEFAULT 0,
-      stock INT NOT NULL DEFAULT 0,
-      active BOOLEAN NOT NULL DEFAULT TRUE,
-      updated_at TIMESTAMP NOT NULL DEFAULT NOW()
-    );
-    """)
     with engine.begin() as conn:
-        conn.execute(sql)
+        for stmt in DDL.strip().split(";"):
+            s = stmt.strip()
+            if s:
+                conn.execute(text(s))
 
-def insert_product(sku: str, name: str, description: str, price: float, stock: int, active: bool):
+def parse_preco(s: str) -> Decimal:
+    s = s.strip().replace(",", ".")
+    try:
+        v = Decimal(s)
+    except InvalidOperation:
+        raise ValueError("Preço inválido.")
+    if v < 0:
+        raise ValueError("Preço não pode ser negativo.")
+    return v.quantize(Decimal("0.01"))
+
+def parse_int(s: str, field: str) -> int:
+    try:
+        return int(s.strip())
+    except ValueError:
+        raise ValueError(f"{field} inválido.")
+
+def inserir_produto(nome: str, descricao: str | None, preco: Decimal, estoque: int) -> int:
     sql = text("""
-      INSERT INTO products (sku, name, description, price, stock, active, updated_at)
-      VALUES (:sku, :name, :description, :price, :stock, :active, NOW())
-      RETURNING id;
+        INSERT INTO produtos (nome, descricao, preco, estoque)
+        VALUES (:nome, :descricao, :preco, :estoque)
+        RETURNING id
     """)
     with engine.begin() as conn:
-        pid = conn.execute(sql, {
-            "sku": sku,
-            "name": name,
-            "description": description or "",
-            "price": price,
-            "stock": stock,
-            "active": active
-        }).scalar_one()
-        return pid
+        new_id = conn.execute(
+            sql,
+            {"nome": nome, "descricao": descricao, "preco": preco, "estoque": estoque},
+        ).scalar_one()
+        return int(new_id)
 
 def main():
-    print("=== Cadastro de Produtos (Postgres) ===\n")
+    print("=== Cadastro de Produtos (Postgres) ===")
     ensure_table()
 
     while True:
-        sku = input("SKU (vazio sai)> ").strip()
-        if not sku:
+        nome = input("\nNome do produto (ENTER para sair): ").strip()
+        if not nome:
+            print("Saindo.")
             break
-        name = input("Nome> ").strip()
-        description = input("Descrição (opcional)> ").strip()
 
-        price_str = input("Preço (ex: 12.90)> ").strip().replace(",", ".")
-        stock_str = input("Estoque (ex: 10)> ").strip()
+        descricao = input("Descrição (opcional): ").strip() or None
 
-        active_str = input("Ativo? (s/n) [s]> ").strip().lower()
-        active = (active_str != "n")
+        while True:
+            try:
+                preco = parse_preco(input("Preço (ex: 12,90): "))
+                break
+            except ValueError as e:
+                print(f"Erro: {e}")
 
-        try:
-            price = float(price_str) if price_str else 0.0
-        except:
-            print("Preço inválido.\n")
-            continue
+        while True:
+            try:
+                estoque = parse_int(input("Estoque (inteiro): "), "Estoque")
+                if estoque < 0:
+                    raise ValueError("Estoque não pode ser negativo.")
+                break
+            except ValueError as e:
+                print(f"Erro: {e}")
 
-        try:
-            stock = int(stock_str) if stock_str else 0
-        except:
-            print("Estoque inválido.\n")
-            continue
-
-        try:
-            pid = insert_product(sku, name, description, price, stock, active)
-            print(f"✅ Cadastrado! id={pid}\n")
-        except Exception as e:
-            print(f"❌ Erro ao cadastrar: {e}\n")
+        new_id = inserir_produto(nome, descricao, preco, estoque)
+        print(f"✅ Produto cadastrado! id={new_id}")
 
 if __name__ == "__main__":
     main()
