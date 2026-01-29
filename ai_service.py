@@ -1,25 +1,30 @@
-# ai_service.py
 import os
 from google import genai
+from memory import load_history, append_message
 
-class AIService:
-    def __init__(self, api_key: str | None = None, model: str = "gemini-1.5-flash"):
-        api_key = api_key or os.getenv("GEMINI_API_KEY")
-        if not api_key:
-            raise ValueError("Defina GEMINI_API_KEY no .env/variável de ambiente.")
-        self.client = genai.Client(api_key=api_key)
-        self.model = model
+client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 
-    def reply(self, user_text: str, system_prompt: str | None = None) -> str:
-        # Prompt simples (pode evoluir depois pra histórico)
-        prompt = user_text.strip()
-        if system_prompt:
-            prompt = f"{system_prompt.strip()}\n\nMensagem do cliente:\n{prompt}"
+MODEL = "gemini-3-flash-preview"
+PROMPT_BASE = "Você é um atendente virtual educado e objetivo."
 
-        resp = self.client.models.generate_content(
-            model=self.model,
-            contents=prompt
-        )
+def responder(instance, contact, user_text):
+    history = "\n".join(load_history(instance, contact))
 
-        text = (resp.text or "").strip()
-        return text if text else "Desculpe, não consegui responder agora."
+    contents = f"""
+{PROMPT_BASE}
+
+HISTÓRICO:
+{history}
+
+AGORA:
+user: {user_text}
+assistant:
+"""
+
+    resp = client.models.generate_content(model=MODEL, contents=contents)
+    answer = (resp.text or "").strip()
+
+    append_message(instance, contact, "user", user_text)
+    append_message(instance, contact, "assistant", answer)
+
+    return answer
