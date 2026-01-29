@@ -5,13 +5,13 @@ from ai_service import responder
 
 app = Flask(__name__)
 
-SEND_URL = os.getenv("EVOLUTION_SEND_URL")
-API_KEY = os.getenv("EVOLUTION_API_KEY")
+SEND_URL = os.getenv("EVOLUTION_API")
+API_KEY = os.getenv("AUTHENTICATION_API_KEY")
 INSTANCE = os.getenv("INSTANCE")
 
 @app.post("/webhook")
 def webhook():
-    
+
     payload = request.get_json() or {}
     data = payload.get("data", payload)
 

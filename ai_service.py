@@ -2,7 +2,7 @@ import os
 from google import genai
 from memory import load_history, append_message
 
-client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+client = genai.Client()
 
 MODEL = "gemini-3-flash-preview"
 PROMPT_BASE = "Você é um atendente virtual educado e objetivo."
