@@ -7,18 +7,9 @@ load_dotenv()
 EVOLUTION_SEND_URL = (os.getenv("EVOLUTION_API") or "").strip().strip('"').strip("'")
 API_KEY = os.getenv("AUTHENTICATION_API_KEY") or ""
 
-HEADERS = {
-    "Content-Type": "application/json",
-    "apikey": API_KEY
-}
+HEADERS = {"Content-Type": "application/json", "apikey": API_KEY}
 
 def send_text(phone: str, text: str) -> dict:
-    
-    """
-    Envia mensagem via Evolution API (/message/sendText/<instance>).
-    Seu .env já aponta EVOLUTION_API para a URL correta.
-    """
-
     if not EVOLUTION_SEND_URL:
         raise RuntimeError("EVOLUTION_API não configurada no .env")
 
