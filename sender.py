@@ -1,45 +1,28 @@
 import os
 import requests
+from dotenv import load_dotenv
 
+load_dotenv()
 
-class EvolutionSender:
+EVOLUTION_SEND_URL = (os.getenv("EVOLUTION_API") or "").strip().strip('"').strip("'")
+API_KEY = os.getenv("AUTHENTICATION_API_KEY") or ""
+
+HEADERS = {
+    "Content-Type": "application/json",
+    "apikey": API_KEY
+}
+
+def send_text(phone: str, text: str) -> dict:
+    
     """
-    Envia mensagem pelo endpoint Evolution.
-    Espera:
-      - EVOLUTION_API (URL completa do sendText/INSTANCIA) no .env
-      - AUTHENTICATION_API_KEY (usado como header apikey)
+    Envia mensagem via Evolution API (/message/sendText/<instance>).
+    Seu .env já aponta EVOLUTION_API para a URL correta.
     """
 
-    def __init__(self):
-        self.send_url = os.getenv("EVOLUTION_API")
-        if not self.send_url:
-            raise RuntimeError("EVOLUTION_API não definido no .env")
+    if not EVOLUTION_SEND_URL:
+        raise RuntimeError("EVOLUTION_API não configurada no .env")
 
-        self.api_key = os.getenv("AUTHENTICATION_API_KEY")
-        if not self.api_key:
-            raise RuntimeError("AUTHENTICATION_API_KEY não definido no .env")
-
-        self.timeout = int(os.getenv("EVOLUTION_TIMEOUT_SECONDS", "30"))
-
-    def send_text(self, to_jid_or_phone: str, text: str) -> dict:
-        """
-        Alguns setups usam jid (ex: 5511999999999@s.whatsapp.net),
-        outros aceitam número puro. Aqui a gente manda como 'number'
-        e também tenta manter o compatível com 'textMessage'.
-        """
-        headers = {
-            "Content-Type": "application/json",
-            "apikey": self.api_key,
-        }
-
-        payload = {
-            "number": to_jid_or_phone,
-            "textMessage": {
-                "text": text
-            }
-        }
-
-        resp = requests.post(self.send_url, json=payload, headers=headers, timeout=self.timeout)
-        # se der erro, levanta com detalhe
-        resp.raise_for_status()
-        return resp.json() if resp.content else {"ok": True}
+    payload = {"number": phone, "text": text}
+    resp = requests.post(EVOLUTION_SEND_URL, json=payload, headers=HEADERS, timeout=30)
+    resp.raise_for_status()
+    return resp.json() if resp.content else {"ok": True}
