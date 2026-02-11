@@ -1,11 +1,8 @@
 import os
-import requests
-from dotenv import load_dotenv
+from google import genai
 
-load_dotenv()
-
-OLLAMA_URL = (os.getenv("OLLAMA_URL") or "").strip().strip('"').strip("'")
-OLLAMA_MODEL = (os.getenv("OLLAMA_MODEL") or "qwen3:8b").strip().strip('"').strip("'")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3-flash-preview")
 
 def build_prompt(history: list[dict], user_text: str) -> str:
     system = (
@@ -23,15 +20,17 @@ def build_prompt(history: list[dict], user_text: str) -> str:
     return "\n".join(lines)
 
 def generate_reply(history: list[dict], user_text: str) -> str:
-    if not OLLAMA_URL:
-        return "OLLAMA_URL não configurada. Ajuste seu .env."
+    if not GEMINI_API_KEY:
+        return "GEMINI_API_KEY não encontrada nas variáveis do sistema."
 
     prompt = build_prompt(history, user_text)
 
-    payload = {"model": OLLAMA_MODEL, "prompt": prompt, "stream": False}
-    resp = requests.post(OLLAMA_URL, json=payload, timeout=90)
-    resp.raise_for_status()
-    data = resp.json()
+    client = genai.Client()
 
-    answer = (data.get("response") or "").strip()
+    response = client.models.generate_content(
+        model=GEMINI_MODEL,
+        contents=prompt,
+    )
+
+    answer = (getattr(response, "text", None) or "").strip()
     return answer or "Não consegui responder agora. Pode reformular?"

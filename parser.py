@@ -29,5 +29,6 @@ def extract_phone_and_text(msg: dict):
     text = str(text).strip()
     if not text:
         return None, None
-
+    
+    print(f"Mensagem recebida de {phone}: {text}")
     return phone, text

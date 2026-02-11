@@ -35,7 +35,13 @@ def webhook():
 
     handled = 0
     for msg in (messages if isinstance(messages, list) else []):
-        phone, text = extract_phone_and_text(msg)
+        data = payload.get("data") or {}
+        phone, text = extract_phone_and_text(data)
+
+        print("DEBUG remoteJid:", (data.get("key") or {}).get("remoteJid"))
+        print("DEBUG PHONE:", phone)
+        print("DEBUG TEXT:", text)
+
         if not phone or not text:
             continue
 
