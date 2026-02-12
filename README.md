@@ -64,7 +64,7 @@ A resposta é enviada
 ⚙️ Variáveis de Ambiente
 🔹 .env
 # Evolution
-AUTHENTICATION_API_KEY=senha
+AUTHENTICATION_API_KEY=
 EVOLUTION_API=http://localhost:8080/message/sendText/secundario
 
 # Webhook
@@ -134,86 +134,6 @@ Usa message.key.id
 Armazena em Redis com TTL
 
 Ignora mensagens duplicadas
-
-🔎 Logs Esperados
-
-Mensagem recebida:
-
-Mensagem recebida de 556992579600: Bom dia
-
-
-Worker executando:
-
-[worker] respondeu 556992579600: Bom dia! Como posso ajudar?
-
-🧠 IA (Gemini)
-
-Arquivo responsável:
-
-ai_service.py
-
-
-Funções principais:
-
-build_prompt(history, user_text)
-
-generate_reply(history, user_text)
-
-Modelo padrão:
-
-gemini-3-flash-preview
-
-🔄 Tratamento de Erros
-
-Redis offline → sistema continua sem debounce
-
-Evento sem texto → ignorado
-
-Payload como lista ou dict → normalizado
-
-Debug mode evita múltiplos workers
-
-🚀 Melhorias Futuras
-
-Persistência de histórico em PostgreSQL
-
-Multi-instância WhatsApp
-
-Painel administrativo
-
-Fila com Celery/Redis
-
-Rate limiting
-
-Logs estruturados
-
-Deploy com Gunicorn + Nginx
-
-Docker Compose completo
-
-🏗 Ambiente de Produção
-
-⚠ Não use Flask dev server em produção.
-
-Use:
-
-gunicorn webhook:app -w 4 -b 0.0.0.0:5000
-
-📌 Observações Técnicas Importantes
-Redis URI
-
-Se rodando Flask no Windows e Redis em Docker:
-
-redis://localhost:6379/6
-
-
-Se tudo estiver em Docker Compose:
-
-redis://redis:6379/6
-
-📜 Licença
-
-Uso acadêmico / experimental.
 
 👨‍💻 Autor
 
