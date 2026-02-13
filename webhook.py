@@ -111,13 +111,18 @@ def webhook():
                 audio_bytes = base64_to_bytes(b64)
                 text = transcribe_with_gemini(audio_bytes, mime)
                 if text:
-                    history = mem_get(phone)
-                    mem_add(phone, "user", text)
-                    answer = generate_reply(history, text)
-                    mem_add(phone, "assistant", answer)
-                    send_text(phone, answer)
-                    audios += 1
-                    print(f"[AUDIO] Resposta IA enviada para {phone}: {answer}")
+                    print(f"[AUDIO] Transcrição de {phone}: {text}")
+                    # Adiciona transcrição ao buffer, igual ao texto
+                    if r:
+                        ok = buffer_add(r, REDIS_PREFIX, phone, text, msg_id=msg_id)
+                        if ok:
+                            buffered += 1
+                    else:
+                        history = mem_get(phone)
+                        mem_add(phone, "user", text)
+                        answer = generate_reply(history, text)
+                        mem_add(phone, "assistant", answer)
+                        send_text(phone, answer)
                 else:
                     send_text(phone, "Não consegui transcrever o áudio.")
             except Exception as e:

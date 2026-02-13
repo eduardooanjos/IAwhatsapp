@@ -2,10 +2,13 @@ import time
 
 PENDING_ZSET = "pending_zset"
 
+# Tempo de espera em segundos após a última mensagem antes de processar (2 minutos)
+BUFFER_DELAY_SECONDS = 120
+
 def buffer_add(r, prefix, phone, text, msg_id=None):
     key = f"{prefix}:buffer:{phone}"
     r.rpush(key, text)
-    r.zadd(PENDING_ZSET, {phone: int(time.time()) + 2})
+    r.zadd(PENDING_ZSET, {phone: int(time.time()) + BUFFER_DELAY_SECONDS})
     return True
 
 def buffer_pop_all(r, prefix, phone):
