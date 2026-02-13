@@ -4,8 +4,10 @@ import threading
 from flask import Flask, request, jsonify
 from dotenv import load_dotenv
 import redis
+import sys
+from audio_service import AudioService
+from parser import extract_phone_and_text, extract_item
 
-from parser import extract_phone_and_text
 from memory import mem_get, mem_add
 from ai_service import generate_reply
 from sender import send_text
@@ -93,8 +95,36 @@ def webhook():
 
     buffered = 0
     ignored = 0
+    audios = 0
+    audio_service = AudioService()
 
     for item in items:
+        # Detecta se é áudio
+        parsed = extract_item({"data": item})
+        if parsed and parsed.get("type") == "audio":
+            phone = parsed["phone"]
+            msg_id = parsed["id"]
+            mime = parsed["mime"]
+            try:
+                from audio import evolution_get_media_base64, base64_to_bytes, transcribe_with_gemini
+                b64 = evolution_get_media_base64(msg_id)
+                audio_bytes = base64_to_bytes(b64)
+                text = transcribe_with_gemini(audio_bytes, mime)
+                if text:
+                    history = mem_get(phone)
+                    mem_add(phone, "user", text)
+                    answer = generate_reply(history, text)
+                    mem_add(phone, "assistant", answer)
+                    send_text(phone, answer)
+                    audios += 1
+                    print(f"[AUDIO] Resposta IA enviada para {phone}: {answer}")
+                else:
+                    send_text(phone, "Não consegui transcrever o áudio.")
+            except Exception as e:
+                print(f"[AUDIO][ERRO] {e}", file=sys.stderr)
+                send_text(phone, "Erro ao processar o áudio.")
+            continue
+
         phone, text = extract_phone_and_text(item)
         if not phone or not text:
             ignored += 1
@@ -114,7 +144,7 @@ def webhook():
             mem_add(phone, "assistant", answer)
             send_text(phone, answer)
 
-    return jsonify({"ok": True, "buffered": buffered, "ignored": ignored}), 200
+    return jsonify({"ok": True, "buffered": buffered, "ignored": ignored, "audios": audios}), 200
 
 
 if __name__ == "__main__":
