@@ -6,7 +6,7 @@ from dotenv import load_dotenv
 import redis
 
 from parser import extract_phone_and_text
-from memory import mem_get, mem_add  # histórico
+from memory import mem_get, mem_add
 from ai_service import generate_reply
 from sender import send_text
 
@@ -20,15 +20,24 @@ WEBHOOK_ENABLED = os.getenv("WEBHOOK_ENABLED", "false").lower() == "true"
 
 REDIS_ENABLED = os.getenv("CACHE_REDIS_ENABLED", "false").lower() == "true"
 REDIS_URI = os.getenv("CACHE_REDIS_URI", "redis://localhost:6379/0")
-REDIS_PREFIX = os.getenv("CACHE_REDIS_PREFIX_KEY", "evolution")
+REDIS_PREFIX = (
+    os.getenv("CACHE_REDIS_PREFIX_KEY")
+    or os.getenv("CACHE_REDIS_PREFIX")
+    or "evolution"
+)
 
-r = redis.Redis.from_url(REDIS_URI, decode_responses=True) if REDIS_ENABLED else None
+r = None
+if REDIS_ENABLED:
+    try:
+        r = redis.Redis.from_url(REDIS_URI, decode_responses=True)
+        r.ping()
+        print("[redis] conectado:", REDIS_URI)
+    except Exception as e:
+        print("[redis] falha ao conectar, debounce desativado:", e)
+        r = None
 
 
 def worker_loop():
-    """
-    A cada 1-2s, vê quem já venceu o due_ts e processa.
-    """
     if not r:
         print("[worker] Redis desativado; debounce não vai funcionar.")
         return
@@ -38,25 +47,20 @@ def worker_loop():
     while True:
         try:
             now = int(time.time())
-            # phones com score <= now
             phones = r.zrangebyscore(PENDING_ZSET, 0, now)
 
             for phone in phones:
-                # lock por phone
                 if not try_lock(r, REDIS_PREFIX, phone, ttl_sec=60):
                     continue
 
-                # remove da agenda (se chegar msg nova, será reagendado com score maior)
                 r.zrem(PENDING_ZSET, phone)
 
                 msgs = buffer_pop_all(r, REDIS_PREFIX, phone)
                 if not msgs:
                     continue
 
-                # junta tudo em um texto só (o cliente mandou várias mensagens)
                 user_text = "\n".join(msgs).strip()
 
-                # histórico e IA
                 history = mem_get(phone)
                 mem_add(phone, "user", user_text)
 
@@ -80,7 +84,6 @@ def webhook():
     payload = request.get_json(silent=True) or {}
     data = payload.get("data")
 
-    # Normaliza: data pode ser dict OU list
     if isinstance(data, list):
         items = data
     elif isinstance(data, dict):
@@ -98,15 +101,13 @@ def webhook():
             continue
 
         msg_id = ((item.get("key") or {}).get("id")) or None
-
         print(f"Mensagem recebida de {phone}: {text}")
 
-        # Debounce buffer
         if r:
             ok = buffer_add(r, REDIS_PREFIX, phone, text, msg_id=msg_id)
-            buffered += 1 if ok else 0
+            if ok:
+                buffered += 1
         else:
-            # fallback sem redis
             history = mem_get(phone)
             mem_add(phone, "user", text)
             answer = generate_reply(history, text)
@@ -117,8 +118,8 @@ def webhook():
 
 
 if __name__ == "__main__":
-    # Só roda o worker no processo "real" (não no reloader)
-    if os.environ.get("WERKZEUG_RUN_MAIN") == "true":
+    # inicia worker no processo correto (com ou sem reloader)
+    if (not app.debug) or (os.environ.get("WERKZEUG_RUN_MAIN") == "true"):
         t = threading.Thread(target=worker_loop, daemon=True)
         t.start()
 

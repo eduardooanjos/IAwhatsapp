@@ -32,3 +32,21 @@ def extract_phone_and_text(msg: dict):
     
     print(f"Mensagem recebida de {phone}: {text}")
     return phone, text
+
+def extract_item(data: dict) -> dict | None:
+    # data = payload inteiro do webhook
+    msg = (data.get("data") or {})
+    key = (msg.get("key") or {})
+    m = (msg.get("message") or {})
+
+    remote = (key.get("remoteJid") or "")
+    phone = remote.split("@")[0].lstrip("+")  # "5569..."
+    msg_id = key.get("id")
+
+    if msg.get("messageType") == "audioMessage" or "audioMessage" in m:
+        audio = m.get("audioMessage") or {}
+        mimetype = audio.get("mimetype") or "audio/ogg"  # fallback comum p/ ptt opus
+        return {"type": "audio", "phone": phone, "id": msg_id, "mime": mimetype}
+
+    # ... seus outros tipos (text, image, etc)
+    return None
