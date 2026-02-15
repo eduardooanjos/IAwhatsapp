@@ -61,7 +61,9 @@ def worker_loop():
                 if not msgs:
                     continue
 
-                user_text = "\n".join(msgs).strip()
+                # Junta todas as mensagens (texto e transcrições)
+                user_text = "\n".join(
+                    [m["content"] if isinstance(m, dict) and m.get("type") == "text" else str(m) for m in msgs]).strip()
 
                 history = mem_get(phone)
                 mem_add(phone, "user", user_text)
@@ -99,7 +101,6 @@ def webhook():
     audio_service = AudioService()
 
     for item in items:
-        # Detecta se é áudio
         parsed = extract_item({"data": item})
         if parsed and parsed.get("type") == "audio":
             phone = parsed["phone"]
@@ -112,9 +113,10 @@ def webhook():
                 text = transcribe_with_gemini(audio_bytes, mime)
                 if text:
                     print(f"[AUDIO] Transcrição de {phone}: {text}")
-                    # Adiciona transcrição ao buffer, igual ao texto
+                    # Armazena transcrição como texto no buffer
+                    text_obj = {"type": "text", "content": text}
                     if r:
-                        ok = buffer_add(r, REDIS_PREFIX, phone, text, msg_id=msg_id)
+                        ok = buffer_add(r, REDIS_PREFIX, phone, text_obj, msg_id=msg_id)
                         if ok:
                             buffered += 1
                     else:
@@ -134,12 +136,10 @@ def webhook():
         if not phone or not text:
             ignored += 1
             continue
-
-        msg_id = ((item.get("key") or {}).get("id")) or None
-        print(f"Mensagem recebida de {phone}: {text}")
-
+        # Armazena texto no buffer
+        text_obj = {"type": "text", "content": text}
         if r:
-            ok = buffer_add(r, REDIS_PREFIX, phone, text, msg_id=msg_id)
+            ok = buffer_add(r, REDIS_PREFIX, phone, text_obj, msg_id=((item.get("key") or {}).get("id")) or None)
             if ok:
                 buffered += 1
         else:
