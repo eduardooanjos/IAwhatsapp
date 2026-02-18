@@ -3,12 +3,12 @@ import time
 import threading
 from flask import Flask, request, jsonify
 from dotenv import load_dotenv
-import redis
+
 import sys
 from audio_service import AudioService
 from parser import extract_phone_and_text, extract_item
 
-from memory import mem_get, mem_add
+from memory import mem_get, mem_add, r
 from ai_service import generate_reply
 from sender import send_text
 
@@ -28,10 +28,9 @@ REDIS_PREFIX = (
     or "evolution"
 )
 
-r = None
+
 if REDIS_ENABLED:
     try:
-        r = redis.Redis.from_url(REDIS_URI, decode_responses=True)
         r.ping()
         print("[redis] conectado:", REDIS_URI)
     except Exception as e:
@@ -41,7 +40,7 @@ if REDIS_ENABLED:
 
 def worker_loop():
     if not r:
-        print("[worker] Redis desativado; debounce nao vai funcionar.")
+        print("[worker] Redis desativado; debounce não vai funcionar.")
         return
 
     print("[worker] rodando debounce worker...")
@@ -61,13 +60,9 @@ def worker_loop():
                 if not msgs:
                     continue
 
-                # Junta todas as mensagens (texto e transcricoes)
+                # Junta todas as mensagens (texto e transcrições)
                 user_text = "\n".join(
-                    [
-                        m["content"] if isinstance(m, dict) and m.get("type") == "text" else str(m)
-                        for m in msgs
-                    ]
-                ).strip()
+                    [m["content"] if isinstance(m, dict) and m.get("type") == "text" else str(m) for m in msgs]).strip()
 
                 history = mem_get(phone)
                 mem_add(phone, "user", user_text)
@@ -116,8 +111,8 @@ def webhook():
                 audio_bytes = base64_to_bytes(b64)
                 text = transcribe_with_gemini(audio_bytes, mime)
                 if text:
-                    print(f"[AUDIO] Transcricao de {phone}: {text}")
-                    # Armazena transcricao como texto no buffer
+                    print(f"[AUDIO] Transcrição de {phone}: {text}")
+                    # Armazena transcrição como texto no buffer
                     text_obj = {"type": "text", "content": text}
                     if r:
                         ok = buffer_add(r, REDIS_PREFIX, phone, text_obj, msg_id=msg_id)
@@ -130,10 +125,10 @@ def webhook():
                         mem_add(phone, "assistant", answer)
                         send_text(phone, answer)
                 else:
-                    send_text(phone, "Nao consegui transcrever o audio.")
+                    send_text(phone, "Não consegui transcrever o áudio.")
             except Exception as e:
                 print(f"[AUDIO][ERRO] {e}", file=sys.stderr)
-                send_text(phone, "Erro ao processar o audio.")
+                send_text(phone, "Erro ao processar o áudio.")
             continue
 
         phone, text = extract_phone_and_text(item)
