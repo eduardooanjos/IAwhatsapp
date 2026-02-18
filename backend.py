@@ -1,306 +1,197 @@
-import os
 import json
-import time
-from typing import Dict, Any, List
+import os
+from pathlib import Path
 
-import requests
-from flask import Flask, jsonify, request, render_template
-from db import db, init_db
-from models import Product
-from datetime import datetime
-from sqlalchemy import or_
-from redis_conn import r  
+import redis
+from dotenv import load_dotenv
+from flask import Flask, jsonify, render_template, request
+from jinja2 import Template
 
-# -----------------------
-# CONFIG
-# -----------------------
-PORT = int(os.getenv("PANEL_PORT", "8000"))
+from memory import mem_add, mem_get
+from sender import send_text
 
-INSTANCE = os.getenv("EVOLUTION_INSTANCE", "secundario")
-EVOLUTION_API_KEY = os.getenv("EVOLUTION_API_KEY", "senha")
-EVOLUTION_SEND_URL = os.getenv(
-    "EVOLUTION_SEND_URL",
-    f"http://localhost:8080/message/sendText/{INSTANCE}"
-)
-HEADERS = {"Content-Type": "application/json", "apikey": EVOLUTION_API_KEY}
+load_dotenv(dotenv_path=".env", override=True)
 
-HIST_MAX = int(os.getenv("PANEL_HIST_MAX", "60"))  # quantas entradas mostrar no painel
-DEFAULT_SYS = os.getenv(
-    "SYS_PROMPT",
-    "Você é um atendente objetivo e educado. Responda em pt-BR, curto e útil. "
-    "Se faltar dado essencial, faça 1 pergunta objetiva."
-)
-
-# -----------------------
-# APP
-# -----------------------
 app = Flask(__name__)
-init_db(app)
+PORT = int(os.getenv("WEB_PORT", "8000"))
+STORE_FILE = Path(os.getenv("STORE_PROFILE_PATH", "store_profile.json"))
 
-# crie as tabelas uma vez (dev)
-with app.app_context():
-    db.create_all()
+REDIS_ENABLED = os.getenv("CACHE_REDIS_ENABLED", "false").lower() == "true"
+REDIS_URI = os.getenv("CACHE_REDIS_URI", "redis://localhost:6379/0")
+REDIS_PREFIX = (
+    os.getenv("CACHE_REDIS_PREFIX_KEY")
+    or os.getenv("CACHE_REDIS_PREFIX")
+    or "evolution"
+)
 
-
-def _b(v) -> str:
-    if v is None:
-        return ""
-    if isinstance(v, bytes):
-        return v.decode("utf-8", errors="ignore")
-    return str(v)
-
-
-def ai_enabled(numero: str) -> bool:
-    v = r.get(f"ai:enabled:{numero}")
-    if v is None:
-        return True
-    return _b(v).strip() == "1"
-
-
-def chat_last_preview(numero: str) -> str:
-    # pega 1 item mais recente
-    raw = r.lrange(f"hist:{numero}", 0, 0) or []
-    if not raw:
-        return ""
+r = None
+if REDIS_ENABLED:
     try:
-        it = json.loads(_b(raw[0]))
-        return (it.get("text") or "").strip()
-    except Exception:
-        return ""
+        r = redis.Redis.from_url(REDIS_URI, decode_responses=True)
+        r.ping()
+        print("[backend] redis conectado:", REDIS_URI)
+    except Exception as e:
+        print("[backend] redis indisponivel:", e)
+        r = None
 
 
-def chat_updated_at(numero: str) -> int:
-    # opcional: salva timestamp no webhook; se não existir, usa "agora" quando tem histórico
-    v = r.get(f"chat:{numero}:updated_at")
-    if v:
-        try:
-            return int(_b(v))
-        except Exception:
-            pass
-    # fallback: se existe histórico, retorna agora (aproximação)
-    has = r.lrange(f"hist:{numero}", 0, 0)
-    return int(time.time()) if has else 0
+def load_store():
+    if not STORE_FILE.exists():
+        return {
+            "model": {"name": os.getenv("GEMINI_MODEL", "gemini-3-flash-preview")},
+            "system_prompt": "",
+            "rules": [],
+            "store": {},
+        }
+    with STORE_FILE.open("r", encoding="utf-8") as f:
+        return json.load(f)
 
 
-def list_chats() -> List[Dict[str, Any]]:
-    nums = r.smembers("chats_ativos") or set()
-    chats = []
-    for n in nums:
-        numero = _b(n).strip()
-        if not numero:
-            continue
-        chats.append({
-            "numero": numero,
-            "ai_enabled": ai_enabled(numero),
-            "last_preview": chat_last_preview(numero),
-            "updated_at": chat_updated_at(numero),
-        })
-    # ordena mais recente primeiro
-    chats.sort(key=lambda x: x.get("updated_at") or 0, reverse=True)
-    return chats
+def save_store(data):
+    with STORE_FILE.open("w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
 
 
-def load_history(numero: str, max_items: int = HIST_MAX) -> List[Dict[str, Any]]:
-    raw_items = r.lrange(f"hist:{numero}", 0, max_items - 1) or []
-    items = []
-    for raw in reversed(raw_items):  # inverte para ordem cronológica
-        try:
-            it = json.loads(_b(raw))
-            role = it.get("role") or "assistant"
-            text = (it.get("text") or "").strip()
-            ts = int(it.get("ts") or 0)
-            if text:
-                items.append({"role": role, "text": text, "ts": ts})
-        except Exception:
-            continue
-    return items
+def build_system_prompt(store_config):
+    template_str = store_config.get("system_prompt", "")
+    rules = "\n".join(f"- {r}" for r in store_config.get("rules", []))
+    template = Template(template_str)
+    return template.render(store=store_config.get("store", {}), rules=rules)
 
 
-def save_turn(numero: str, role: str, text: str):
-    it = {"role": role, "text": text, "ts": int(time.time())}
-    r.lpush(f"hist:{numero}", json.dumps(it, ensure_ascii=False))
-    # mantém um histórico maior no Redis
-    r.ltrim(f"hist:{numero}", 0, 399)
-    r.set(f"chat:{numero}:updated_at", str(int(time.time())), ex=60 * 60 * 24 * 30)
-    r.sadd("chats_ativos", numero)
+def _chat_key(phone):
+    return f"{REDIS_PREFIX}:chat:{phone}"
 
 
-def send_whatsapp(numero: str, texto: str):
-    payload = {"instance": INSTANCE, "number": numero, "text": texto}
-    requests.post(EVOLUTION_SEND_URL, json=payload, headers=HEADERS, timeout=30)
+def _ai_key(phone):
+    return f"{REDIS_PREFIX}:ai:{phone}"
 
 
-def build_debug_context(numero: str) -> str:
-    sys = _b(r.get("cfg:sys")).strip() or DEFAULT_SYS
-    hist = load_history(numero, max_items=12)
-    lines = ["SYS:", sys, "", "CHAT:"]
-    for it in hist[-8:]:
-        prefix = "U:" if it["role"] == "user" else "A:"
-        lines.append(f"{prefix} {it['text']}")
-    return "\n".join(lines).strip()
+def _parse_phone_from_chat_key(key):
+    prefix = f"{REDIS_PREFIX}:chat:"
+    return key[len(prefix) :] if key.startswith(prefix) else ""
 
 
-# -----------------------
-# ROUTES UI
-# -----------------------
+def _is_ai_enabled(phone):
+    if not r:
+        return True
+    val = r.get(_ai_key(phone))
+    if val is None:
+        return True
+    return str(val).strip().lower() in {"1", "true", "on", "yes"}
+
+
+def _list_chat_numbers():
+    if not r:
+        return []
+    numbers = []
+    for key in r.scan_iter(match=f"{REDIS_PREFIX}:chat:*", count=500):
+        phone = _parse_phone_from_chat_key(key)
+        if phone:
+            numbers.append(phone)
+    return sorted(set(numbers))
+
+
+def _chat_snapshot(phone):
+    history = mem_get(phone, max_items=100)
+    updated_at = 0
+    last_preview = ""
+    if history:
+        last = history[-1]
+        updated_at = int(last.get("t") or 0)
+        last_preview = (last.get("content") or "").strip()
+    return {
+        "numero": phone,
+        "ai_enabled": _is_ai_enabled(phone),
+        "updated_at": updated_at,
+        "last_preview": last_preview[:160],
+    }
+
+
 @app.get("/")
 def home():
     return render_template("index.html")
 
 
-# -----------------------
-# API
-# -----------------------
 @app.get("/api/chats")
 def api_chats():
-    return jsonify({"chats": list_chats()})
+    chats = [_chat_snapshot(phone) for phone in _list_chat_numbers()]
+    chats.sort(key=lambda c: (c.get("updated_at") or 0), reverse=True)
+    return jsonify({"chats": chats})
 
 
 @app.get("/api/chat/<numero>")
-def api_chat(numero: str):
-    # garante chat em "ativos" caso exista histórico
-    if r.lrange(f"hist:{numero}", 0, 0):
-        r.sadd("chats_ativos", numero)
-
-    return jsonify({
-        "numero": numero,
-        "ai_enabled": ai_enabled(numero),
-        "updated_at": chat_updated_at(numero),
-        "last_preview": chat_last_preview(numero),
-        "history": load_history(numero, HIST_MAX),
-        "debug_context": build_debug_context(numero),
-    })
-
-
-@app.post("/api/chat/<numero>/toggle")
-def api_toggle(numero: str):
-    cur = ai_enabled(numero)
-    newv = "0" if cur else "1"
-    r.set(f"ai:enabled:{numero}", newv)
-    return jsonify({"numero": numero, "ai_enabled": (newv == "1")})
+def api_chat(numero):
+    raw = mem_get(numero, max_items=200)
+    history = [
+        {
+            "role": it.get("role", "assistant"),
+            "text": it.get("content", ""),
+            "ts": int(it.get("t") or 0),
+        }
+        for it in raw
+    ]
+    snap = _chat_snapshot(numero)
+    return jsonify({**snap, "history": history})
 
 
 @app.post("/api/chat/<numero>/send")
-def api_send(numero: str):
-    data = request.json or {}
-    text = (data.get("text") or "").strip()
+def api_chat_send(numero):
+    body = request.get_json(silent=True) or {}
+    text = str(body.get("text", "")).strip()
     if not text:
-        return jsonify({"ok": False, "error": "text vazio"}), 400
+        return jsonify({"ok": False, "error": "TEXT_REQUIRED"}), 400
 
-    # envio manual (salva como "assistant" porque é sua mensagem no painel)
-    save_turn(numero, "assistant", text)
-    send_whatsapp(numero, text)
+    try:
+        send_text(numero, text)
+        mem_add(numero, "assistant", text)
+        return jsonify({"ok": True})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
 
-    return jsonify({"ok": True})
+
+@app.post("/api/chat/<numero>/toggle")
+def api_chat_toggle(numero):
+    if not r:
+        return jsonify({"ok": False, "error": "REDIS_DISABLED"}), 400
+    new_val = not _is_ai_enabled(numero)
+    r.set(_ai_key(numero), "1" if new_val else "0")
+    return jsonify({"ok": True, "numero": numero, "ai_enabled": new_val})
 
 
 @app.post("/api/chat/<numero>/clear")
-def api_clear(numero: str):
-    r.delete(f"hist:{numero}")
-    r.set(f"chat:{numero}:updated_at", "0")
-    return jsonify({"ok": True})
+def api_chat_clear(numero):
+    if r:
+        r.delete(_chat_key(numero))
+        r.delete(f"{REDIS_PREFIX}:buffer:{numero}")
+        r.zrem("pending_zset", numero)
+    return jsonify({"ok": True, "numero": numero})
 
 
 @app.get("/api/config")
 def api_config_get():
-    sys_txt = _b(r.get("cfg:sys")).strip()
-    if not sys_txt:
-        sys_txt = DEFAULT_SYS
-    return jsonify({"sys_prompt": sys_txt})
+    config = load_store()
+    return jsonify({"sys_prompt": config.get("system_prompt", "")})
 
 
 @app.post("/api/config")
 def api_config_set():
-    data = request.json or {}
-    sys_prompt = (data.get("sys_prompt") or "").strip()
-    if not sys_prompt:
-        sys_prompt = DEFAULT_SYS
-    r.set("cfg:sys", sys_prompt)
+    body = request.get_json(silent=True) or {}
+    sys_prompt = str(body.get("sys_prompt", "")).strip()
+    config = load_store()
+    config["system_prompt"] = sys_prompt
+    save_store(config)
     return jsonify({"ok": True})
 
-@app.get("/api/products")
-def api_products_list():
-    q = (request.args.get("q") or "").strip()
-    only_active = (request.args.get("active") or "1").strip() == "1"
 
-    query = Product.query
-    if only_active:
-        query = query.filter(Product.active.is_(True))
-
-    if q:
-        like = f"%{q}%"
-        query = query.filter(or_(Product.name.ilike(like), Product.sku.ilike(like)))
-
-    items = query.order_by(Product.updated_at.desc()).limit(300).all()
-    return jsonify({
-        "items": [{
-            "id": p.id,
-            "sku": p.sku,
-            "name": p.name,
-            "price": float(p.price),
-            "stock": p.stock,
-            "active": p.active,
-            "updated_at": int(p.updated_at.timestamp()),
-        } for p in items]
-    })
-
-@app.post("/api/products/create")
-def api_products_create():
-    data = request.json or {}
-    sku = (data.get("sku") or "").strip()
-    name = (data.get("name") or "").strip()
-    price = data.get("price", 0)
-    stock = int(data.get("stock", 0))
-    active = bool(data.get("active", True))
-
-    if not sku or not name:
-        return jsonify({"ok": False, "error": "sku e name são obrigatórios"}), 400
-
-    if Product.query.filter_by(sku=sku).first():
-        return jsonify({"ok": False, "error": "sku já existe"}), 409
-
-    p = Product(sku=sku, name=name, price=price, stock=stock, active=active, updated_at=datetime.utcnow())
-    db.session.add(p)
-    db.session.commit()
-    return jsonify({"ok": True, "id": p.id})
-
-@app.post("/api/products/<int:pid>/update")
-def api_products_update(pid: int):
-    p = Product.query.get(pid)
-    if not p:
-        return jsonify({"ok": False, "error": "produto não encontrado"}), 404
-
-    data = request.json or {}
-    p.name = (data.get("name") or p.name).strip()
-    p.price = data.get("price", p.price)
-    p.stock = int(data.get("stock", p.stock))
-    p.active = bool(data.get("active", p.active))
-    p.updated_at = datetime.utcnow()
-    db.session.commit()
-    return jsonify({"ok": True})
-
-@app.post("/api/products/<int:pid>/toggle")
-def api_products_toggle(pid: int):
-    p = Product.query.get(pid)
-    if not p:
-        return jsonify({"ok": False, "error": "produto não encontrado"}), 404
-    p.active = not bool(p.active)
-    p.updated_at = datetime.utcnow()
-    db.session.commit()
-    return jsonify({"ok": True, "active": p.active})
-
-@app.post("/api/products/<int:pid>/stock")
-def api_products_stock(pid: int):
-    p = Product.query.get(pid)
-    if not p:
-        return jsonify({"ok": False, "error": "produto não encontrado"}), 404
-    data = request.json or {}
-    p.stock = int(data.get("stock", p.stock))
-    p.updated_at = datetime.utcnow()
-    db.session.commit()
-    return jsonify({"ok": True, "stock": p.stock})
+@app.get("/api/store/prompt")
+def api_store_prompt():
+    config = load_store()
+    prompt = build_system_prompt(config)
+    model_name = ((config.get("model") or {}).get("name")) or os.getenv("GEMINI_MODEL", "")
+    return jsonify({"model": model_name, "system_prompt_rendered": prompt})
 
 
 if __name__ == "__main__":
-    print("🧩 Painel rodando em http://0.0.0.0:%d" % PORT)
-    app.run(host="0.0.0.0", port=PORT, debug=False, use_reloader=False)
+    print(f"Painel rodando em http://0.0.0.0:{PORT}")
+    app.run(host="0.0.0.0", port=PORT, debug=True)

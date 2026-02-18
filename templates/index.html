@@ -3,148 +3,35 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Painel WhatsApp + IA</title>
+  <title>WhatsApp Web + IA</title>
   <link rel="stylesheet" href="/static/css/style.css" />
 </head>
 <body>
-  <div class="app">
-    <aside class="sidebar">
-      <div class="brand">
-        <div class="dot"></div>
-        <div>
-          <div class="title">Painel de Atendimento</div>
-          <div class="sub">Evolution + IA + Redis</div>
-        </div>
+  <div class="wa-app">
+    <aside class="wa-sidebar">
+      <div class="wa-sidebar-header">
+        <span class="wa-logo">💬</span>
+        <span class="wa-title">WhatsApp + IA</span>
       </div>
-
-      <div class="search">
-        <input id="searchInput" placeholder="Buscar chat (número)..." />
-        <button id="refreshBtn" class="btn ghost" title="Atualizar">↻</button>
-      </div>
-
-      <div class="tabs">
-        <button class="tab active" data-tab="tab-chats">Chats</button>
-         <button class="tab" data-tab="tab-products">Produtos</button>
-        <button class="tab" data-tab="tab-settings">Config</button>
-        <button class="tab" data-tab="tab-help">Ajuda</button>
-      </div>
-
-      <section id="tab-chats" class="tabpane active">
-        <div class="pane-header">
-          <div class="pane-title">Conversas</div>
-          <div class="pill" id="chatCount">0</div>
-        </div>
-        <div id="chatList" class="chatlist"></div>
-      </section>
-
-          <section id="tab-products" class="tabpane">
-      <div class="pane-header">
-        <div class="pane-title">Produtos</div>
-        <div style="display:flex; gap:8px; align-items:center;">
-          <div class="pill" id="prodCount">0</div>
-          <button id="newProdBtn" class="btn">+ Novo</button>
-        </div>
-      </div>
-
-        <div class="card">
-          <div class="row" style="margin:0;">
-            <input id="prodSearch" placeholder="Buscar por nome ou SKU..." style="flex:1;" />
-            <button id="prodRefreshBtn" class="btn ghost">↻</button>
-          </div>
-          <label class="chk" style="margin-bottom:0;">
-            <input type="checkbox" id="prodOnlyActive" checked />
-            <span>Mostrar apenas ativos</span>
-          </label>
-        </div>
-
-        <div id="prodList" class="prodlist"></div>
-      </section>
-
-
-      <section id="tab-settings" class="tabpane">
-        <div class="pane-header">
-          <div class="pane-title">Configurações</div>
-        </div>
-        
-
-        <div class="card">
-          <div class="card-title">Prompt do sistema (global)</div>
-          <textarea id="sysPrompt" rows="8" placeholder="cfg:sys..."></textarea>
-          <div class="row">
-            <button id="saveSysBtn" class="btn">Salvar</button>
-            <button id="reloadSysBtn" class="btn ghost">Recarregar</button>
-          </div>
-          <div class="hint">Salva em <code>cfg:sys</code> no Redis. O webhook usa isso no prompt.</div>
-        </div>
-
-        <div class="card">
-          <div class="card-title">Regras rápidas</div>
-          <label class="chk">
-            <input type="checkbox" id="autoRefresh" checked />
-            <span>Auto-atualizar chats (a cada 3s)</span>
-          </label>
-          <label class="chk">
-            <input type="checkbox" id="showSystemInDebug" />
-            <span>Mostrar detalhes do contexto no painel (cliente)</span>
-          </label>
-          <div class="hint">Obs: Debug no terminal é controlado no Python.</div>
-        </div>
-      </section>
-
-      <section id="tab-help" class="tabpane">
-        <div class="card">
-          <div class="card-title">Como funciona</div>
-          <ul class="ul">
-            <li>Webhook recebe mensagem → salva em Redis → se IA habilitada, gera resposta e envia.</li>
-            <li>Painel lista chats e exibe histórico em tempo real.</li>
-            <li>Você pode desabilitar IA por chat e responder manualmente.</li>
-          </ul>
-        </div>
-      </section>
+      <div class="wa-chatlist" id="chatList"></div>
     </aside>
 
-    <main class="main">
-      <header class="topbar">
-        <div class="top-left">
-          <div class="h1" id="activeTitle">Selecione um chat</div>
-          <div class="meta" id="activeMeta">—</div>
+    <section class="wa-main">
+      <header class="wa-topbar">
+        <div class="wa-contact">
+          <div class="wa-contact-avatar" id="activeContactAvatar">?</div>
+          <div class="wa-contact-name" id="activeContactName">Selecione uma conversa</div>
         </div>
-
-        <div class="top-actions">
-          <button id="toggleAiBtn" class="btn warn" disabled>IA: —</button>
-          <button id="clearBtn" class="btn ghost" disabled title="Limpar histórico local do chat (Redis)">Limpar</button>
-        </div>
+        <button id="aiToggleBtn" class="wa-ai-btn" disabled>IA: -</button>
       </header>
 
-      <section class="chat">
-        <div id="messages" class="messages empty">
-          <div class="emptyState">
-            <div class="emoji">💬</div>
-            <div>Escolha um chat na esquerda pra ver o histórico.</div>
-          </div>
-        </div>
+      <div class="wa-messages" id="messages"></div>
 
-        <div class="composer">
-          <textarea id="composerInput" rows="2" placeholder="Digite sua mensagem..." disabled></textarea>
-          <button id="sendBtn" class="btn" disabled>Enviar</button>
-        </div>
-
-        <div class="footerhint" id="composerHint">
-          Quando a IA estiver <b>desabilitada</b>, o envio manual é liberado.
-        </div>
-      </section>
-    </main>
-  </div>
-
-  <!-- mini janela/modal -->
-  <div id="modal" class="modal hidden">
-    <div class="modal-card">
-      <div class="modal-head">
-        <div class="modal-title" id="modalTitle">Modal</div>
-        <button id="modalClose" class="btn ghost">✕</button>
-      </div>
-      <div id="modalBody" class="modal-body"></div>
-    </div>
+      <form class="wa-composer" id="composer">
+        <textarea id="composerInput" placeholder="Digite uma mensagem..."></textarea>
+        <button type="submit">Enviar</button>
+      </form>
+    </section>
   </div>
 
   <script src="/static/js/frontend.js"></script>

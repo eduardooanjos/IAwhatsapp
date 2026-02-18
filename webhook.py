@@ -41,7 +41,7 @@ if REDIS_ENABLED:
 
 def worker_loop():
     if not r:
-        print("[worker] Redis desativado; debounce não vai funcionar.")
+        print("[worker] Redis desativado; debounce nao vai funcionar.")
         return
 
     print("[worker] rodando debounce worker...")
@@ -61,9 +61,13 @@ def worker_loop():
                 if not msgs:
                     continue
 
-                # Junta todas as mensagens (texto e transcrições)
+                # Junta todas as mensagens (texto e transcricoes)
                 user_text = "\n".join(
-                    [m["content"] if isinstance(m, dict) and m.get("type") == "text" else str(m) for m in msgs]).strip()
+                    [
+                        m["content"] if isinstance(m, dict) and m.get("type") == "text" else str(m)
+                        for m in msgs
+                    ]
+                ).strip()
 
                 history = mem_get(phone)
                 mem_add(phone, "user", user_text)
@@ -112,8 +116,8 @@ def webhook():
                 audio_bytes = base64_to_bytes(b64)
                 text = transcribe_with_gemini(audio_bytes, mime)
                 if text:
-                    print(f"[AUDIO] Transcrição de {phone}: {text}")
-                    # Armazena transcrição como texto no buffer
+                    print(f"[AUDIO] Transcricao de {phone}: {text}")
+                    # Armazena transcricao como texto no buffer
                     text_obj = {"type": "text", "content": text}
                     if r:
                         ok = buffer_add(r, REDIS_PREFIX, phone, text_obj, msg_id=msg_id)
@@ -126,10 +130,10 @@ def webhook():
                         mem_add(phone, "assistant", answer)
                         send_text(phone, answer)
                 else:
-                    send_text(phone, "Não consegui transcrever o áudio.")
+                    send_text(phone, "Nao consegui transcrever o audio.")
             except Exception as e:
                 print(f"[AUDIO][ERRO] {e}", file=sys.stderr)
-                send_text(phone, "Erro ao processar o áudio.")
+                send_text(phone, "Erro ao processar o audio.")
             continue
 
         phone, text = extract_phone_and_text(item)
