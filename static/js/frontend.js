@@ -13,7 +13,13 @@ const state = {
   active: null,
   history: [],
   pollTimer: null,
+  lastChatNumero: null,
 };
+
+function isNearBottom(el, thresholdPx = 40) {
+  const distance = el.scrollHeight - el.scrollTop - el.clientHeight;
+  return distance <= thresholdPx;
+}
 
 function escapeHtml(v) {
   return String(v || "")
@@ -96,6 +102,11 @@ function renderHeader() {
 }
 
 function renderMessages() {
+  const currentChat = state.active?.numero || null;
+  const chatChanged = currentChat && state.lastChatNumero !== currentChat;
+  if (chatChanged) state.lastChatNumero = currentChat;
+  const shouldAutoScroll = chatChanged ? true : isNearBottom(els.messages);
+
   els.messages.innerHTML = "";
 
   if (!state.active) {
@@ -114,18 +125,23 @@ function renderMessages() {
 
   state.history.forEach((msg) => {
     const mine = msg.role !== "user";
+    const isAudioTranscript = !mine && String(msg.text || "").startsWith("[Audio] ");
+    const cleanText = isAudioTranscript ? String(msg.text).slice(8) : String(msg.text || "");
     const wrap = document.createElement("div");
     wrap.className = `wa-msg ${mine ? "wa-msg-assistant" : "wa-msg-user"}`;
     wrap.innerHTML = `
       <div class="wa-bubble">
-        ${escapeHtml(msg.text)}
+        ${isAudioTranscript ? '<div class="wa-audio-flag">Audio transcrito</div>' : ""}
+        ${escapeHtml(cleanText)}
         <div class="wa-meta">${mine ? "Atendimento" : "Cliente"} ${fmtTime(msg.ts)}</div>
       </div>
     `;
     els.messages.appendChild(wrap);
   });
 
-  els.messages.scrollTop = els.messages.scrollHeight;
+  if (shouldAutoScroll) {
+    els.messages.scrollTop = els.messages.scrollHeight;
+  }
 }
 
 async function loadChats() {
@@ -212,7 +228,7 @@ function startPolling() {
     } catch {
       // polling silencioso
     }
-  }, 3000);
+  }, 1000);
 }
 
 (async function init() {

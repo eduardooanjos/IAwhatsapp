@@ -1,17 +1,15 @@
 import os
+import sys
 import time
 import threading
+
 from flask import Flask, request, jsonify
 from dotenv import load_dotenv
 
-import sys
-from audio_service import AudioService
 from parser import extract_phone_and_text, extract_item
-
 from memory import mem_get, mem_add, r
 from ai_service import generate_reply
 from sender import send_text
-
 from buffer import buffer_add, buffer_pop_all, try_lock, PENDING_ZSET
 
 load_dotenv(dotenv_path=".env", override=True)
@@ -19,7 +17,6 @@ load_dotenv(dotenv_path=".env", override=True)
 app = Flask(__name__)
 
 WEBHOOK_ENABLED = os.getenv("WEBHOOK_ENABLED", "false").lower() == "true"
-
 REDIS_ENABLED = os.getenv("CACHE_REDIS_ENABLED", "false").lower() == "true"
 REDIS_URI = os.getenv("CACHE_REDIS_URI", "redis://localhost:6379/0")
 REDIS_PREFIX = (
@@ -27,7 +24,6 @@ REDIS_PREFIX = (
     or os.getenv("CACHE_REDIS_PREFIX")
     or "evolution"
 )
-
 
 if REDIS_ENABLED:
     try:
@@ -40,7 +36,7 @@ if REDIS_ENABLED:
 
 def worker_loop():
     if not r:
-        print("[worker] Redis desativado; debounce não vai funcionar.")
+        print("[worker] Redis desativado; debounce nao vai funcionar.")
         return
 
     print("[worker] rodando debounce worker...")
@@ -60,14 +56,21 @@ def worker_loop():
                 if not msgs:
                     continue
 
-                # Junta todas as mensagens (texto e transcrições)
                 user_text = "\n".join(
-                    [m["content"] if isinstance(m, dict) and m.get("type") == "text" else str(m) for m in msgs]).strip()
+                    [
+                        m["content"]
+                        if isinstance(m, dict) and m.get("type") == "text"
+                        else str(m)
+                        for m in msgs
+                    ]
+                ).strip()
 
+                # Mensagens do cliente ja foram salvas no historico no webhook.
                 history = mem_get(phone)
-                mem_add(phone, "user", user_text)
+                pending_count = len(msgs)
+                base_history = history[:-pending_count] if len(history) >= pending_count else []
 
-                answer = generate_reply(history, user_text)
+                answer = generate_reply(base_history, user_text)
                 mem_add(phone, "assistant", answer)
 
                 send_text(phone, answer)
@@ -97,53 +100,67 @@ def webhook():
     buffered = 0
     ignored = 0
     audios = 0
-    audio_service = AudioService()
 
     for item in items:
         parsed = extract_item({"data": item})
         if parsed and parsed.get("type") == "audio":
+            audios += 1
             phone = parsed["phone"]
             msg_id = parsed["id"]
             mime = parsed["mime"]
             try:
                 from audio import evolution_get_media_base64, base64_to_bytes, transcribe_with_gemini
+
                 b64 = evolution_get_media_base64(msg_id)
                 audio_bytes = base64_to_bytes(b64)
                 text = transcribe_with_gemini(audio_bytes, mime)
+
                 if text:
-                    print(f"[AUDIO] Transcrição de {phone}: {text}")
-                    # Armazena transcrição como texto no buffer
-                    text_obj = {"type": "text", "content": text}
+                    print(f"[AUDIO] Transcricao de {phone}: {text}")
+
+                    # Mostra no painel de chat com marcador de audio.
+                    mem_add(phone, "user", f"[Audio] {text}")
+
+                    # Para IA, vai com texto puro da transcricao no buffer.
                     if r:
+                        text_obj = {"type": "text", "content": text}
                         ok = buffer_add(r, REDIS_PREFIX, phone, text_obj, msg_id=msg_id)
                         if ok:
                             buffered += 1
                     else:
                         history = mem_get(phone)
-                        mem_add(phone, "user", text)
                         answer = generate_reply(history, text)
                         mem_add(phone, "assistant", answer)
                         send_text(phone, answer)
                 else:
-                    send_text(phone, "Não consegui transcrever o áudio.")
+                    send_text(phone, "Nao consegui transcrever o audio.")
+
             except Exception as e:
                 print(f"[AUDIO][ERRO] {e}", file=sys.stderr)
-                send_text(phone, "Erro ao processar o áudio.")
+                send_text(phone, "Erro ao processar o audio.")
             continue
 
         phone, text = extract_phone_and_text(item)
         if not phone or not text:
             ignored += 1
             continue
-        # Armazena texto no buffer
-        text_obj = {"type": "text", "content": text}
+
+        # Mostra na interface imediatamente quando webhook captura.
+        mem_add(phone, "user", text)
+
         if r:
-            ok = buffer_add(r, REDIS_PREFIX, phone, text_obj, msg_id=((item.get("key") or {}).get("id")) or None)
+            text_obj = {"type": "text", "content": text}
+            ok = buffer_add(
+                r,
+                REDIS_PREFIX,
+                phone,
+                text_obj,
+                msg_id=((item.get("key") or {}).get("id")) or None,
+            )
             if ok:
                 buffered += 1
         else:
             history = mem_get(phone)
-            mem_add(phone, "user", text)
             answer = generate_reply(history, text)
             mem_add(phone, "assistant", answer)
             send_text(phone, answer)
@@ -152,7 +169,6 @@ def webhook():
 
 
 if __name__ == "__main__":
-    # inicia worker no processo correto (com ou sem reloader)
     if (not app.debug) or (os.environ.get("WERKZEUG_RUN_MAIN") == "true"):
         t = threading.Thread(target=worker_loop, daemon=True)
         t.start()
