@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Configuracao da IA</title>
+  <link rel="stylesheet" href="/static/css/style.css" />
+</head>
+<body>
+  <div class="wa-app">
+    <nav class="wa-rail">
+      <a class="wa-rail-item" href="/" title="Conversas">💬</a>
+      <a class="wa-rail-item active" href="/config" title="Configurações">⚙</a>
+    </nav>
+
+    <div class="cfg-page">
+      <header class="cfg-header">
+        <div>
+          <h1>Configuracao da IA</h1>
+          <p>Ajuste prompt, regras, horarios e dados da empresa.</p>
+        </div>
+        <div class="cfg-actions">
+          <button id="saveBtn" class="cfg-save-btn">Salvar</button>
+        </div>
+      </header>
+
+      <main class="cfg-grid">
+        <section class="cfg-card">
+          <h2>IA</h2>
+          <label>Modelo</label>
+          <input id="modelName" type="text" placeholder="gemini-3-flash-preview" />
+
+          <label>Tempo de resposta (segundos)</label>
+          <input id="responseDelaySeconds" type="number" min="0" max="120" step="1" />
+
+          <label>Timezone</label>
+          <input id="timezone" type="text" placeholder="America/Porto_Velho" />
+
+          <label>Politica de horario comercial</label>
+          <textarea id="businessHoursPolicy" rows="3"></textarea>
+
+          <label>Mensagem fora do horario</label>
+          <textarea id="outsideHoursMessage" rows="3"></textarea>
+
+          <label>Contato para atendimento humano</label>
+          <input id="handoffContact" type="text" placeholder="Nome e telefone do responsavel" />
+        </section>
+
+        <section class="cfg-card">
+          <h2>Prompt e Regras</h2>
+          <label>Prompt base (template)</label>
+          <textarea id="systemPrompt" rows="14"></textarea>
+
+          <label>Regras (1 por linha)</label>
+          <textarea id="rules" rows="8" placeholder="Responda em portugues do Brasil."></textarea>
+
+          <label>Topicos bloqueados (1 por linha)</label>
+          <textarea id="blockedTopics" rows="5" placeholder="Assuntos que a IA nao deve tratar"></textarea>
+        </section>
+
+        <section class="cfg-card">
+          <h2>Dados da Empresa</h2>
+          <label>Nome</label>
+          <input id="storeName" type="text" />
+
+          <label>CNPJ</label>
+          <input id="storeCnpj" type="text" />
+
+          <label>Endereco</label>
+          <textarea id="storeAddress" rows="3"></textarea>
+
+          <label>Horarios</label>
+          <textarea id="storeHours" rows="3"></textarea>
+
+          <label>Telefone</label>
+          <input id="storePhone" type="text" />
+
+          <label>WhatsApp</label>
+          <input id="storeWhatsapp" type="text" />
+
+          <label>Email</label>
+          <input id="storeEmail" type="text" />
+
+          <label>Instagram</label>
+          <input id="storeInstagram" type="text" />
+
+          <label>Site</label>
+          <input id="storeSite" type="text" />
+
+          <label>Entrega</label>
+          <textarea id="storeDelivery" rows="3"></textarea>
+
+          <label>Retirada</label>
+          <textarea id="storePickup" rows="3"></textarea>
+
+          <label>Pagamentos</label>
+          <textarea id="storePayments" rows="3"></textarea>
+
+          <label>Politica de trocas/devolucoes</label>
+          <textarea id="storeReturnsPolicy" rows="3"></textarea>
+        </section>
+      </main>
+
+      <footer class="cfg-footer" id="statusText"></footer>
+    </div>
+  </div>
+
+  <script src="/static/js/config.js"></script>
+</body>
+</html>

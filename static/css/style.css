@@ -14,6 +14,35 @@ body {
   display: flex;
   height: 100vh;
 }
+.wa-rail {
+  width: 72px;
+  background: #121a28;
+  border-right: 1px solid #20334f;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 12px 0;
+  gap: 10px;
+}
+.wa-rail-item {
+  width: 46px;
+  height: 46px;
+  border-radius: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-decoration: none;
+  font-size: 22px;
+  background: transparent;
+  color: #d4e3ff;
+}
+.wa-rail-item:hover {
+  background: #263348;
+}
+.wa-rail-item.active {
+  background: #2a64ff33;
+  box-shadow: inset 0 0 0 1px #2a64ff55;
+}
 
 .wa-sidebar {
   width: 320px;
@@ -114,6 +143,11 @@ body {
   padding: 18px 24px;
   border-bottom: 1px solid #20334f;
   background: #181f2a;
+}
+.wa-topbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
 }
 .wa-contact {
   display: flex;
@@ -260,32 +294,174 @@ body {
 
 @media (max-width: 900px) {
   .wa-app {
-    flex-direction: column;
+    height: auto;
+    min-height: 100vh;
   }
   .wa-sidebar {
-    width: 100vw;
-    flex-direction: row;
-    border-right: none;
-    border-bottom: 1px solid #20334f;
-    height: 70px;
-    min-height: 70px;
-    max-height: 70px;
-    overflow-x: auto;
-    overflow-y: hidden;
+    width: 280px;
   }
-  .wa-chatlist {
-    display: flex;
-    flex-direction: row;
-    padding: 0 8px;
+  .wa-bubble {
+    max-width: 72vw;
   }
-  .wa-chat {
+  .cfg-grid {
+    grid-template-columns: 1fr;
+  }
+  .cfg-sidebar {
+    width: 240px;
+  }
+}
+
+@media (max-width: 700px) {
+  .wa-app {
     flex-direction: column;
-    align-items: center;
-    padding: 8px 10px;
-    min-width: 70px;
-    max-width: 90px;
+  }
+  .wa-rail {
+    width: 72px;
+    height: auto;
+    border-right: 1px solid #20334f;
+    border-bottom: none;
+    flex-direction: column;
+    justify-content: flex-start;
+    padding: 12px 0;
+  }
+  .wa-sidebar {
+    width: 100%;
+    min-height: 180px;
+    max-height: 220px;
   }
   .wa-main {
-    min-height: calc(100vh - 70px);
+    min-height: 60vh;
+  }
+  .cfg-sidebar {
+    width: 100%;
+    border-right: none;
+    border-bottom: 1px solid #20334f;
+  }
+  .wa-topbar-actions {
+    gap: 8px;
+  }
+}
+
+.cfg-page {
+  flex: 1;
+  min-height: 100vh;
+  background: #101624;
+  color: #e6eefc;
+  padding: 24px;
+  box-sizing: border-box;
+  overflow-y: auto;
+}
+.cfg-sidebar {
+  width: 280px;
+  background: #181f2a;
+  border-right: 1px solid #20334f;
+  display: flex;
+  flex-direction: column;
+}
+.cfg-sidebar-header {
+  padding: 22px 16px 14px 16px;
+  font-size: 18px;
+  font-weight: 700;
+  border-bottom: 1px solid #20334f;
+}
+.cfg-sidebar-item {
+  padding: 12px 16px;
+  color: #9bb0d0;
+  border-left: 3px solid transparent;
+}
+.cfg-sidebar-item.active {
+  color: #dce7ff;
+  border-left-color: #2a64ff;
+  background: #232c3b;
+}
+.cfg-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+  margin-bottom: 18px;
+}
+.cfg-header h1 {
+  margin: 0;
+  font-size: 28px;
+}
+.cfg-header p {
+  margin: 8px 0 0 0;
+  color: #9bb0d0;
+}
+.cfg-actions {
+  display: flex;
+  gap: 10px;
+}
+.cfg-save-btn {
+  border: none;
+  border-radius: 14px;
+  background: #2a64ff;
+  color: #fff;
+  font-weight: 700;
+  padding: 10px 16px;
+  cursor: pointer;
+}
+.cfg-save-btn:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
+.cfg-grid {
+  display: grid;
+  gap: 16px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+.cfg-card {
+  background: #181f2a;
+  border: 1px solid #20334f;
+  border-radius: 12px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.cfg-card h2 {
+  margin: 0 0 6px 0;
+  color: #cfe0ff;
+  font-size: 17px;
+}
+.cfg-card label {
+  font-size: 13px;
+  color: #9bb0d0;
+}
+.cfg-card input,
+.cfg-card textarea {
+  border-radius: 10px;
+  border: 1px solid #2a3e5e;
+  background: #232c3b;
+  color: #e6eefc;
+  padding: 9px 10px;
+  outline: none;
+  font-size: 14px;
+  box-sizing: border-box;
+}
+.cfg-card textarea {
+  resize: vertical;
+}
+.cfg-footer {
+  margin-top: 14px;
+  color: #7de8bb;
+  font-size: 14px;
+  min-height: 20px;
+}
+.cfg-footer.error {
+  color: #ffb0b0;
+}
+
+@media (max-width: 700px) {
+  .cfg-page {
+    padding: 14px;
+  }
+  .cfg-header {
+    flex-direction: column;
+  }
+  .cfg-actions {
+    width: 100%;
+    justify-content: flex-start;
   }
 }

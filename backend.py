@@ -35,21 +35,127 @@ if REDIS_ENABLED:
         r = None
 
 
+DEFAULT_SYSTEM_PROMPT = """Voce e o atendente virtual da {{store.name}}.
+
+REGRAS:
+{{rules}}
+
+DADOS DA EMPRESA:
+- Nome: {{store.name}}
+- Endereco: {{store.address}}
+- Horarios: {{store.hours}}
+- Entrega: {{store.delivery}}
+- Retirada: {{store.pickup}}
+- Pagamentos: {{store.payments}}
+- Politica de trocas: {{store.returns_policy}}
+
+IMPORTANTE:
+- Se algo nao estiver nos dados, diga que vai confirmar.
+"""
+
+
+def _default_store():
+    return {
+        "name": "",
+        "address": "",
+        "hours": "",
+        "delivery": "",
+        "pickup": "",
+        "payments": "",
+        "returns_policy": "",
+        "cnpj": "",
+        "contact_phone": "",
+        "contact_whatsapp": "",
+        "contact_email": "",
+        "instagram": "",
+        "site": "",
+    }
+
+
+def _default_config():
+    return {
+        "model": {"name": os.getenv("GEMINI_MODEL", "gemini-3-flash-preview")},
+        "system_prompt": DEFAULT_SYSTEM_PROMPT,
+        "rules": [
+            "Responda em portugues do Brasil.",
+            "Seja curto e objetivo.",
+            "Nao invente preco, estoque ou prazo.",
+        ],
+        "store": _default_store(),
+        "ai_settings": {
+            "response_delay_seconds": 0,
+            "timezone": "America/Porto_Velho",
+            "business_hours_policy": "Responder normalmente no horario comercial.",
+            "outside_hours_message": "",
+            "handoff_contact": "",
+            "blocked_topics": [],
+        },
+    }
+
+
+def _to_str(v):
+    return str(v or "").strip()
+
+
+def _to_int(v, default=0, min_value=0, max_value=120):
+    try:
+        value = int(v)
+    except Exception:
+        value = default
+    return max(min_value, min(max_value, value))
+
+
+def _ensure_list_of_strings(v):
+    if isinstance(v, list):
+        return [_to_str(x) for x in v if _to_str(x)]
+    if isinstance(v, str):
+        return [_to_str(x) for x in v.splitlines() if _to_str(x)]
+    return []
+
+
+def _normalize_config(raw):
+    cfg = _default_config()
+    if not isinstance(raw, dict):
+        return cfg
+
+    model_name = ((raw.get("model") or {}).get("name")) or cfg["model"]["name"]
+    cfg["model"]["name"] = _to_str(model_name) or cfg["model"]["name"]
+
+    system_prompt = _to_str(raw.get("system_prompt"))
+    if system_prompt:
+        cfg["system_prompt"] = system_prompt
+
+    rules = _ensure_list_of_strings(raw.get("rules"))
+    if rules:
+        cfg["rules"] = rules
+
+    store_src = raw.get("store") if isinstance(raw.get("store"), dict) else {}
+    for key in cfg["store"].keys():
+        cfg["store"][key] = _to_str(store_src.get(key))
+
+    ai_src = raw.get("ai_settings") if isinstance(raw.get("ai_settings"), dict) else {}
+    cfg["ai_settings"]["response_delay_seconds"] = _to_int(ai_src.get("response_delay_seconds"), default=0)
+    cfg["ai_settings"]["timezone"] = _to_str(ai_src.get("timezone")) or cfg["ai_settings"]["timezone"]
+    cfg["ai_settings"]["business_hours_policy"] = _to_str(ai_src.get("business_hours_policy"))
+    cfg["ai_settings"]["outside_hours_message"] = _to_str(ai_src.get("outside_hours_message"))
+    cfg["ai_settings"]["handoff_contact"] = _to_str(ai_src.get("handoff_contact"))
+    cfg["ai_settings"]["blocked_topics"] = _ensure_list_of_strings(ai_src.get("blocked_topics"))
+
+    return cfg
+
+
 def load_store():
     if not STORE_FILE.exists():
-        return {
-            "model": {"name": os.getenv("GEMINI_MODEL", "gemini-3-flash-preview")},
-            "system_prompt": "",
-            "rules": [],
-            "store": {},
-        }
+        return _default_config()
     with STORE_FILE.open("r", encoding="utf-8") as f:
-        return json.load(f)
+        raw = json.load(f)
+    return _normalize_config(raw)
 
 
 def save_store(data):
+    normalized = _normalize_config(data)
     with STORE_FILE.open("w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
+        json.dump(normalized, f, ensure_ascii=False, indent=2)
 
 
 def build_system_prompt(store_config):
@@ -111,6 +217,11 @@ def _chat_snapshot(phone):
 @app.get("/")
 def home():
     return render_template("index.html")
+
+
+@app.get("/config")
+def config_page():
+    return render_template("config.html")
 
 
 @app.get("/api/chats")
@@ -182,6 +293,19 @@ def api_config_set():
     config["system_prompt"] = sys_prompt
     save_store(config)
     return jsonify({"ok": True})
+
+
+@app.get("/api/config/full")
+def api_config_full_get():
+    return jsonify({"config": load_store()})
+
+
+@app.post("/api/config/full")
+def api_config_full_set():
+    body = request.get_json(silent=True) or {}
+    config = body.get("config") if isinstance(body.get("config"), dict) else body
+    save_store(config)
+    return jsonify({"ok": True, "config": load_store()})
 
 
 @app.get("/api/store/prompt")

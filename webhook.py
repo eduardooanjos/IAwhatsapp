@@ -8,7 +8,7 @@ from dotenv import load_dotenv
 
 from parser import extract_phone_and_text, extract_item
 from memory import mem_get, mem_add, r
-from ai_service import generate_reply
+from ai_service import generate_reply, load_profile
 from sender import send_text
 from buffer import buffer_add, buffer_pop_all, try_lock, unlock, PENDING_ZSET
 
@@ -91,6 +91,14 @@ def _process_phone(phone: str):
         base_history = history[:-pending_count] if len(history) >= pending_count else []
 
         answer = generate_reply(base_history, user_text)
+        try:
+            profile = load_profile()
+            delay = int(((profile.get("ai_settings") or {}).get("response_delay_seconds")) or 0)
+            delay = max(0, min(120, delay))
+        except Exception:
+            delay = 0
+        if delay:
+            time.sleep(delay)
         mem_add(phone, "assistant", answer)
         send_text(phone, answer)
         print(f"[worker] respondeu {phone}: {answer[:80]}")
