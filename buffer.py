@@ -24,3 +24,7 @@ def try_lock(r, prefix, phone, ttl_sec=60):
         r.expire(key, ttl_sec)
         return True
     return False
+
+def unlock(r, prefix, phone):
+    key = f"{prefix}:lock:{phone}"
+    r.delete(key)

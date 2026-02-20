@@ -10,7 +10,7 @@ from parser import extract_phone_and_text, extract_item
 from memory import mem_get, mem_add, r
 from ai_service import generate_reply
 from sender import send_text
-from buffer import buffer_add, buffer_pop_all, try_lock, PENDING_ZSET
+from buffer import buffer_add, buffer_pop_all, try_lock, unlock, PENDING_ZSET
 
 load_dotenv(dotenv_path=".env", override=True)
 
@@ -24,6 +24,7 @@ REDIS_PREFIX = (
     or os.getenv("CACHE_REDIS_PREFIX")
     or "evolution"
 )
+PROCESSED_MSG_TTL_SECONDS = int(os.getenv("PROCESSED_MSG_TTL_SECONDS", "21600"))
 
 if REDIS_ENABLED:
     try:
@@ -50,36 +51,53 @@ def worker_loop():
                 if not try_lock(r, REDIS_PREFIX, phone, ttl_sec=60):
                     continue
 
-                r.zrem(PENDING_ZSET, phone)
-
-                msgs = buffer_pop_all(r, REDIS_PREFIX, phone)
-                if not msgs:
-                    continue
-
-                user_text = "\n".join(
-                    [
-                        m["content"]
-                        if isinstance(m, dict) and m.get("type") == "text"
-                        else str(m)
-                        for m in msgs
-                    ]
-                ).strip()
-
-                # Mensagens do cliente ja foram salvas no historico no webhook.
-                history = mem_get(phone)
-                pending_count = len(msgs)
-                base_history = history[:-pending_count] if len(history) >= pending_count else []
-
-                answer = generate_reply(base_history, user_text)
-                mem_add(phone, "assistant", answer)
-
-                send_text(phone, answer)
-                print(f"[worker] respondeu {phone}: {answer[:80]}")
+                threading.Thread(target=_process_phone, args=(phone,), daemon=True).start()
 
         except Exception as e:
             print("[worker] erro:", e)
 
         time.sleep(2)
+
+
+def _message_already_processed(msg_id: str | None) -> bool:
+    if not r or not msg_id:
+        return False
+    key = f"{REDIS_PREFIX}:processed:{msg_id}"
+    # set nx = primeira vez; se falhar, já foi processada.
+    was_set = r.set(key, "1", ex=PROCESSED_MSG_TTL_SECONDS, nx=True)
+    return not bool(was_set)
+
+
+def _process_phone(phone: str):
+    try:
+        r.zrem(PENDING_ZSET, phone)
+
+        msgs = buffer_pop_all(r, REDIS_PREFIX, phone)
+        if not msgs:
+            return
+
+        user_text = "\n".join(
+            [
+                m["content"]
+                if isinstance(m, dict) and m.get("type") == "text"
+                else str(m)
+                for m in msgs
+            ]
+        ).strip()
+
+        # Mensagens do cliente ja foram salvas no historico no webhook.
+        history = mem_get(phone)
+        pending_count = len(msgs)
+        base_history = history[:-pending_count] if len(history) >= pending_count else []
+
+        answer = generate_reply(base_history, user_text)
+        mem_add(phone, "assistant", answer)
+        send_text(phone, answer)
+        print(f"[worker] respondeu {phone}: {answer[:80]}")
+    except Exception as e:
+        print(f"[worker][{phone}] erro:", e)
+    finally:
+        unlock(r, REDIS_PREFIX, phone)
 
 
 @app.post("/webhook")
@@ -102,12 +120,24 @@ def webhook():
     audios = 0
 
     for item in items:
+        key = item.get("key") or {}
+        msg_id = key.get("id")
+
+        if _message_already_processed(msg_id):
+            ignored += 1
+            continue
+
         parsed = extract_item({"data": item})
         if parsed and parsed.get("type") == "audio":
             audios += 1
             phone = parsed["phone"]
-            msg_id = parsed["id"]
             mime = parsed["mime"]
+
+            # Ignora áudio enviado pela própria instância.
+            if key.get("fromMe") is True:
+                ignored += 1
+                continue
+
             try:
                 from audio import evolution_get_media_base64, base64_to_bytes, transcribe_with_gemini
 
@@ -155,7 +185,7 @@ def webhook():
                 REDIS_PREFIX,
                 phone,
                 text_obj,
-                msg_id=((item.get("key") or {}).get("id")) or None,
+                msg_id=msg_id or None,
             )
             if ok:
                 buffered += 1
