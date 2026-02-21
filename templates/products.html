@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Produtos</title>
+  <link rel="stylesheet" href="/static/css/style.css" />
+</head>
+<body>
+  <div class="wa-app">
+    <nav class="wa-rail">
+      <a class="wa-rail-item" href="/" title="Conversas">💬</a>
+      <a class="wa-rail-item active" href="/products" title="Produtos">📦</a>
+      <a class="wa-rail-item" href="/config" title="Configurações">⚙</a>
+    </nav>
+
+    <div class="products-page">
+      <header class="products-header">
+        <div>
+          <h1>Cadastro de Produtos</h1>
+          <p>Gerencie os produtos que a IA pode consultar no atendimento.</p>
+        </div>
+      </header>
+
+      <section class="products-card">
+        <h2 id="formTitle">Novo produto</h2>
+        <form id="productForm" class="products-form">
+          <input type="hidden" id="productId" />
+
+          <label>Nome</label>
+          <input id="name" type="text" required />
+
+          <label>SKU</label>
+          <input id="sku" type="text" />
+
+          <label>Categoria</label>
+          <input id="category" type="text" />
+
+          <label>Preço</label>
+          <input id="price" type="number" min="0" step="0.01" />
+
+          <label>Estoque</label>
+          <input id="stock" type="number" min="0" step="1" />
+
+          <label>Descrição</label>
+          <textarea id="description" rows="3"></textarea>
+
+          <label class="products-checkbox">
+            <input id="active" type="checkbox" checked />
+            Produto ativo
+          </label>
+
+          <div class="products-form-actions">
+            <button class="cfg-save-btn" type="submit">Salvar produto</button>
+            <button class="products-btn-secondary" type="button" id="cancelEditBtn">Cancelar edição</button>
+          </div>
+        </form>
+      </section>
+
+      <section class="products-card">
+        <div class="products-toolbar">
+          <input id="searchInput" type="text" placeholder="Buscar por nome, SKU ou categoria..." />
+          <button id="reloadBtn" class="products-btn-secondary" type="button">Atualizar</button>
+        </div>
+        <div id="statusText" class="cfg-footer"></div>
+        <div id="productsList" class="products-list"></div>
+      </section>
+    </div>
+  </div>
+
+  <script src="/static/js/products.js"></script>
+</body>
+</html>

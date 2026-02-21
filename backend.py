@@ -7,13 +7,15 @@ from dotenv import load_dotenv
 from flask import Flask, jsonify, render_template, request
 from jinja2 import Template
 
+load_dotenv(dotenv_path=".env", override=True)
+
+from db import ensure_products_table, list_products, create_product, update_product, delete_product
 from memory import mem_add, mem_get
 from sender import send_text
 
-load_dotenv(dotenv_path=".env", override=True)
-
 app = Flask(__name__)
 PORT = int(os.getenv("WEB_PORT", "8000"))
+APP_DEBUG = os.getenv("WEB_DEBUG", "true").lower() == "true"
 STORE_FILE = Path(os.getenv("STORE_PROFILE_PATH", "store_profile.json"))
 
 REDIS_ENABLED = os.getenv("CACHE_REDIS_ENABLED", "false").lower() == "true"
@@ -25,13 +27,23 @@ REDIS_PREFIX = (
 )
 
 r = None
+
+
+def _is_effective_process() -> bool:
+    if not APP_DEBUG:
+        return True
+    return os.environ.get("WERKZEUG_RUN_MAIN") == "true"
+
+
 if REDIS_ENABLED:
     try:
         r = redis.Redis.from_url(REDIS_URI, decode_responses=True)
-        r.ping()
-        print("[backend] redis conectado:", REDIS_URI)
+        if _is_effective_process():
+            r.ping()
+            print("[backend] redis conectado:", REDIS_URI)
     except Exception as e:
-        print("[backend] redis indisponivel:", e)
+        if _is_effective_process():
+            print("[backend] redis indisponivel:", e)
         r = None
 
 
@@ -214,6 +226,36 @@ def _chat_snapshot(phone):
     }
 
 
+def _to_float(v, default=0.0):
+    try:
+        return float(v)
+    except Exception:
+        return default
+
+
+def _to_non_negative_int(v, default=0):
+    try:
+        return max(0, int(v))
+    except Exception:
+        return default
+
+
+def _parse_product_payload(body):
+    name = str(body.get("name", "")).strip()
+    if not name:
+        return None, "NAME_REQUIRED"
+    data = {
+        "name": name,
+        "sku": str(body.get("sku", "")).strip(),
+        "category": str(body.get("category", "")).strip(),
+        "description": str(body.get("description", "")).strip(),
+        "price": max(0.0, _to_float(body.get("price"), 0.0)),
+        "stock": _to_non_negative_int(body.get("stock"), 0),
+        "active": bool(body.get("active", True)),
+    }
+    return data, None
+
+
 @app.get("/")
 def home():
     return render_template("index.html")
@@ -222,6 +264,11 @@ def home():
 @app.get("/config")
 def config_page():
     return render_template("config.html")
+
+
+@app.get("/products")
+def products_page():
+    return render_template("products.html")
 
 
 @app.get("/api/chats")
@@ -316,6 +363,58 @@ def api_store_prompt():
     return jsonify({"model": model_name, "system_prompt_rendered": prompt})
 
 
+@app.get("/api/products")
+def api_products_list():
+    q = str(request.args.get("q", "")).strip()
+    active_only = str(request.args.get("active_only", "false")).lower() in {"1", "true", "yes", "on"}
+    try:
+        items = list_products(search=q, only_active=active_only)
+        return jsonify({"products": items})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.post("/api/products")
+def api_products_create():
+    body = request.get_json(silent=True) or {}
+    payload, err = _parse_product_payload(body)
+    if err:
+        return jsonify({"ok": False, "error": err}), 400
+    try:
+        created = create_product(payload)
+        return jsonify({"ok": True, "product": created})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.put("/api/products/<int:product_id>")
+def api_products_update(product_id):
+    body = request.get_json(silent=True) or {}
+    payload, err = _parse_product_payload(body)
+    if err:
+        return jsonify({"ok": False, "error": err}), 400
+    try:
+        updated = update_product(product_id, payload)
+        if not updated:
+            return jsonify({"ok": False, "error": "NOT_FOUND"}), 404
+        return jsonify({"ok": True, "product": updated})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.delete("/api/products/<int:product_id>")
+def api_products_delete(product_id):
+    try:
+        ok = delete_product(product_id)
+        if not ok:
+            return jsonify({"ok": False, "error": "NOT_FOUND"}), 404
+        return jsonify({"ok": True, "id": product_id})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
 if __name__ == "__main__":
-    print(f"Painel rodando em http://0.0.0.0:{PORT}")
-    app.run(host="0.0.0.0", port=PORT, debug=True)
+    if _is_effective_process():
+        ensure_products_table()
+        print(f"Painel rodando em http://0.0.0.0:{PORT}")
+    app.run(host="0.0.0.0", port=PORT, debug=APP_DEBUG)
