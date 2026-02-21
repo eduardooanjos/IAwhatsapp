@@ -1,8 +1,10 @@
 import os
+import unicodedata
+from difflib import SequenceMatcher
 from pathlib import Path
 
 from dotenv import load_dotenv
-from sqlalchemy import create_engine, text
+from sqlalchemy import bindparam, create_engine, text
 
 load_dotenv(dotenv_path=".env", override=True)
 
@@ -14,6 +16,61 @@ if not _db_url:
 
 engine = create_engine(_db_url, pool_pre_ping=True)
 IS_SQLITE = engine.dialect.name == "sqlite"
+_SCHEMA_READY = False
+
+
+def _normalize_text(v: str) -> str:
+    s = (v or "").strip().lower()
+    s = unicodedata.normalize("NFKD", s)
+    s = "".join(ch for ch in s if not unicodedata.combining(ch))
+    return " ".join(s.split())
+
+
+def _tokenize(v: str) -> list[str]:
+    stop = {
+        "a",
+        "o",
+        "os",
+        "as",
+        "de",
+        "da",
+        "do",
+        "dos",
+        "das",
+        "para",
+        "pra",
+        "um",
+        "uma",
+        "tem",
+        "tem?",
+        "ter",
+        "com",
+        "e",
+        "ou",
+        "no",
+        "na",
+        "nos",
+        "nas",
+        "por",
+        "quanto",
+        "qual",
+        "quais",
+    }
+    tokens = []
+    for raw in _normalize_text(v).replace(",", " ").replace(".", " ").split():
+        t = raw.strip()
+        if len(t) <= 1 or t in stop:
+            continue
+        tokens.append(t)
+    return tokens
+
+
+def _ensure_schema_once():
+    global _SCHEMA_READY
+    if _SCHEMA_READY:
+        return
+    ensure_products_table()
+    _SCHEMA_READY = True
 
 
 def get_client_id_by_instance(instance: str) -> str | None:
@@ -40,7 +97,7 @@ def get_prompt_for_client(client_id: str) -> str:
 
 def ensure_products_table() -> None:
     if IS_SQLITE:
-        ddl = text(
+        ddl_products = text(
             """
             CREATE TABLE IF NOT EXISTS products (
               id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -56,8 +113,20 @@ def ensure_products_table() -> None:
             )
             """
         )
+        ddl_aliases = text(
+            """
+            CREATE TABLE IF NOT EXISTS product_aliases (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              product_id INTEGER NOT NULL,
+              alias TEXT NOT NULL,
+              created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+              UNIQUE(product_id, alias),
+              FOREIGN KEY(product_id) REFERENCES products(id) ON DELETE CASCADE
+            )
+            """
+        )
     else:
-        ddl = text(
+        ddl_products = text(
             """
             CREATE TABLE IF NOT EXISTS products (
               id BIGSERIAL PRIMARY KEY,
@@ -73,8 +142,20 @@ def ensure_products_table() -> None:
             )
             """
         )
+        ddl_aliases = text(
+            """
+            CREATE TABLE IF NOT EXISTS product_aliases (
+              id BIGSERIAL PRIMARY KEY,
+              product_id BIGINT NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+              alias VARCHAR(200) NOT NULL,
+              created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+              UNIQUE(product_id, alias)
+            )
+            """
+        )
     with engine.begin() as conn:
-        conn.execute(ddl)
+        conn.execute(ddl_products)
+        conn.execute(ddl_aliases)
 
 
 def _normalize_product_row(row: dict) -> dict:
@@ -96,14 +177,55 @@ def _get_product_by_id(conn, product_id: int) -> dict | None:
     return _normalize_product_row(dict(row)) if row else None
 
 
+def _get_alias_map(conn, product_ids: list[int]) -> dict[int, list[str]]:
+    if not product_ids:
+        return {}
+    q = (
+        text("SELECT product_id, alias FROM product_aliases WHERE product_id IN :ids ORDER BY alias ASC")
+        .bindparams(bindparam("ids", expanding=True))
+    )
+    rows = conn.execute(q, {"ids": list(product_ids)}).mappings().all()
+    out = {}
+    for r in rows:
+        pid = int(r["product_id"])
+        out.setdefault(pid, []).append(str(r["alias"]))
+    return out
+
+
+def get_product_aliases(product_id: int) -> list[str]:
+    _ensure_schema_once()
+    q = text("SELECT alias FROM product_aliases WHERE product_id = :id ORDER BY alias ASC")
+    with engine.begin() as conn:
+        rows = conn.execute(q, {"id": int(product_id)}).mappings().all()
+        return [str(r["alias"]) for r in rows]
+
+
+def set_product_aliases(product_id: int, aliases: list[str]) -> list[str]:
+    _ensure_schema_once()
+    clean = []
+    seen = set()
+    for a in aliases or []:
+        alias = " ".join(str(a or "").strip().split())
+        if not alias:
+            continue
+        key = _normalize_text(alias)
+        if key in seen:
+            continue
+        seen.add(key)
+        clean.append(alias)
+
+    with engine.begin() as conn:
+        conn.execute(text("DELETE FROM product_aliases WHERE product_id = :id"), {"id": int(product_id)})
+        if clean:
+            ins = text("INSERT INTO product_aliases (product_id, alias) VALUES (:product_id, :alias)")
+            for alias in clean:
+                conn.execute(ins, {"product_id": int(product_id), "alias": alias})
+    return clean
+
+
 def list_products(search: str = "", only_active: bool = False) -> list[dict]:
+    _ensure_schema_once()
     where = []
-    params = {"q": f"%{search.strip().lower()}%"}
-    if search.strip():
-        if IS_SQLITE:
-            where.append("(LOWER(name) LIKE :q OR LOWER(sku) LIKE :q OR LOWER(category) LIKE :q)")
-        else:
-            where.append("(name ILIKE :q OR sku ILIKE :q OR category ILIKE :q)")
     if only_active:
         where.append("active = 1" if IS_SQLITE else "active = TRUE")
     where_sql = ("WHERE " + " AND ".join(where)) if where else ""
@@ -118,12 +240,36 @@ def list_products(search: str = "", only_active: bool = False) -> list[dict]:
         """
     )
     with engine.begin() as conn:
-        rows = conn.execute(q, params).mappings().all()
-        return [_normalize_product_row(dict(r)) for r in rows]
+        rows = [_normalize_product_row(dict(r)) for r in conn.execute(q).mappings().all()]
+        ids = [int(r["id"]) for r in rows]
+        alias_map = _get_alias_map(conn, ids)
+        for r in rows:
+            r["aliases"] = alias_map.get(int(r["id"]), [])
+
+    term = _normalize_text(search)
+    if not term:
+        return rows
+
+    filtered = []
+    for p in rows:
+        hay = " ".join(
+            [
+                _normalize_text(p.get("name", "")),
+                _normalize_text(p.get("sku", "")),
+                _normalize_text(p.get("category", "")),
+                _normalize_text(p.get("description", "")),
+                _normalize_text(" ".join(p.get("aliases", []))),
+            ]
+        )
+        if term in hay:
+            filtered.append(p)
+    return filtered
 
 
 def create_product(data: dict) -> dict:
+    _ensure_schema_once()
     payload = dict(data)
+    aliases = payload.pop("aliases", [])
     if IS_SQLITE:
         payload["active"] = 1 if payload.get("active", True) else 0
         q = text(
@@ -134,7 +280,10 @@ def create_product(data: dict) -> dict:
         )
         with engine.begin() as conn:
             res = conn.execute(q, payload)
-            return _get_product_by_id(conn, int(res.lastrowid))
+            created = _get_product_by_id(conn, int(res.lastrowid)) or {}
+        if created:
+            created["aliases"] = set_product_aliases(int(created["id"]), aliases)
+        return created
 
     q = text(
         """
@@ -145,11 +294,17 @@ def create_product(data: dict) -> dict:
     )
     with engine.begin() as conn:
         row = conn.execute(q, payload).mappings().first()
-        return _normalize_product_row(dict(row)) if row else {}
+        created = _normalize_product_row(dict(row)) if row else {}
+    if created:
+        created["aliases"] = set_product_aliases(int(created["id"]), aliases)
+    return created
 
 
 def update_product(product_id: int, data: dict) -> dict | None:
+    _ensure_schema_once()
     payload = {**data, "id": int(product_id)}
+    aliases = payload.pop("aliases", [])
+    updated = None
     if IS_SQLITE:
         payload["active"] = 1 if payload.get("active", True) else 0
         q = text(
@@ -168,32 +323,101 @@ def update_product(product_id: int, data: dict) -> dict | None:
         )
         with engine.begin() as conn:
             res = conn.execute(q, payload)
-            if (res.rowcount or 0) <= 0:
-                return None
-            return _get_product_by_id(conn, int(product_id))
-
-    q = text(
-        """
-        UPDATE products
-           SET name = :name,
-               sku = :sku,
-               category = :category,
-               description = :description,
-               price = :price,
-               stock = :stock,
-               active = :active,
-               updated_at = CURRENT_TIMESTAMP
-         WHERE id = :id
-         RETURNING id, name, sku, category, description, price, stock, active, created_at, updated_at
-        """
-    )
-    with engine.begin() as conn:
-        row = conn.execute(q, payload).mappings().first()
-        return _normalize_product_row(dict(row)) if row else None
+            if (res.rowcount or 0) > 0:
+                updated = _get_product_by_id(conn, int(product_id))
+    else:
+        q = text(
+            """
+            UPDATE products
+               SET name = :name,
+                   sku = :sku,
+                   category = :category,
+                   description = :description,
+                   price = :price,
+                   stock = :stock,
+                   active = :active,
+                   updated_at = CURRENT_TIMESTAMP
+             WHERE id = :id
+             RETURNING id, name, sku, category, description, price, stock, active, created_at, updated_at
+            """
+        )
+        with engine.begin() as conn:
+            row = conn.execute(q, payload).mappings().first()
+            updated = _normalize_product_row(dict(row)) if row else None
+    if updated:
+        updated["aliases"] = set_product_aliases(int(product_id), aliases)
+    return updated
 
 
 def delete_product(product_id: int) -> bool:
+    _ensure_schema_once()
     q = text("DELETE FROM products WHERE id = :id")
     with engine.begin() as conn:
         res = conn.execute(q, {"id": int(product_id)})
         return (res.rowcount or 0) > 0
+
+
+def search_products_for_ai(query: str, limit: int = 5) -> list[dict]:
+    _ensure_schema_once()
+    items = list_products(search="", only_active=True)
+    if not items:
+        return []
+
+    q_norm = _normalize_text(query)
+    q_tokens = _tokenize(query)
+    if not q_norm:
+        return []
+
+    scored = []
+    for p in items:
+        name = _normalize_text(p.get("name", ""))
+        sku = _normalize_text(p.get("sku", ""))
+        cat = _normalize_text(p.get("category", ""))
+        desc = _normalize_text(p.get("description", ""))
+        aliases = [_normalize_text(a) for a in p.get("aliases", [])]
+        alias_blob = " ".join(aliases)
+
+        score = 0.0
+        if q_norm in name:
+            score += 4.0
+        if q_norm in cat or q_norm in sku or q_norm in desc:
+            score += 2.0
+        if q_norm in alias_blob:
+            score += 4.0
+
+        token_hits = 0
+        for t in q_tokens:
+            if t in name:
+                token_hits += 2
+            elif t in alias_blob:
+                token_hits += 2
+            elif t in cat or t in desc:
+                token_hits += 1
+        if q_tokens:
+            score += (token_hits / max(1, len(q_tokens))) * 3.0
+
+        fuzzy_targets = [name, cat, desc, *aliases]
+        ratio = max((SequenceMatcher(a=q_norm, b=target).ratio() for target in fuzzy_targets if target), default=0.0)
+        score += ratio * 2.5
+
+        # Evita retorno ruim quando nao houve qualquer evidência textual.
+        if score < 1.8:
+            continue
+
+        scored.append(
+            {
+                "id": p.get("id"),
+                "name": p.get("name", ""),
+                "sku": p.get("sku", ""),
+                "category": p.get("category", ""),
+                "description": p.get("description", ""),
+                "price": p.get("price", 0),
+                "stock": p.get("stock", 0),
+                "active": p.get("active", False),
+                "aliases": p.get("aliases", []),
+                "score": round(score, 4),
+            }
+        )
+
+    scored.sort(key=lambda x: x["score"], reverse=True)
+    return scored[: max(1, min(int(limit or 5), 20))]

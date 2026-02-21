@@ -8,6 +8,7 @@ const els = {
   price: document.getElementById("price"),
   stock: document.getElementById("stock"),
   description: document.getElementById("description"),
+  aliases: document.getElementById("aliases"),
   active: document.getElementById("active"),
   cancelEditBtn: document.getElementById("cancelEditBtn"),
   searchInput: document.getElementById("searchInput"),
@@ -60,6 +61,7 @@ function clearForm() {
   els.price.value = "0";
   els.stock.value = "0";
   els.description.value = "";
+  els.aliases.value = "";
   els.active.checked = true;
 }
 
@@ -71,6 +73,10 @@ function getFormPayload() {
     price: Number(els.price.value || 0),
     stock: Number(els.stock.value || 0),
     description: (els.description.value || "").trim(),
+    aliases: String(els.aliases.value || "")
+      .split("\n")
+      .map((v) => v.trim())
+      .filter(Boolean),
     active: !!els.active.checked,
   };
 }
@@ -84,6 +90,7 @@ function fillForm(product) {
   els.price.value = String(product.price || 0);
   els.stock.value = String(product.stock || 0);
   els.description.value = product.description || "";
+  els.aliases.value = Array.isArray(product.aliases) ? product.aliases.join("\n") : "";
   els.active.checked = !!product.active;
   window.scrollTo({ top: 0, behavior: "smooth" });
 }
@@ -106,6 +113,9 @@ function renderProducts() {
           <div class="product-meta">
             Preco: R$ ${Number(p.price || 0).toFixed(2)} | Estoque: ${Number(p.stock || 0)}
             | ${p.active ? "Ativo" : "Inativo"}
+          </div>
+          <div class="product-meta">
+            Sinonimos: ${escapeHtml(Array.isArray(p.aliases) && p.aliases.length ? p.aliases.join(", ") : "-")}
           </div>
           <div class="product-desc">${escapeHtml(p.description || "")}</div>
         </div>

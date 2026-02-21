@@ -16,7 +16,10 @@ from sender import send_text
 app = Flask(__name__)
 PORT = int(os.getenv("WEB_PORT", "8000"))
 APP_DEBUG = os.getenv("WEB_DEBUG", "true").lower() == "true"
+BASE_DIR = Path(__file__).resolve().parent
 STORE_FILE = Path(os.getenv("STORE_PROFILE_PATH", "store_profile.json"))
+if not STORE_FILE.is_absolute():
+    STORE_FILE = BASE_DIR / STORE_FILE
 
 REDIS_ENABLED = os.getenv("CACHE_REDIS_ENABLED", "false").lower() == "true"
 REDIS_URI = os.getenv("CACHE_REDIS_URI", "redis://localhost:6379/0")
@@ -252,7 +255,24 @@ def _parse_product_payload(body):
         "price": max(0.0, _to_float(body.get("price"), 0.0)),
         "stock": _to_non_negative_int(body.get("stock"), 0),
         "active": bool(body.get("active", True)),
+        "aliases": [],
     }
+    aliases = body.get("aliases", [])
+    if isinstance(aliases, str):
+        aliases = [x.strip() for x in aliases.splitlines() if str(x).strip()]
+    if isinstance(aliases, list):
+        clean = []
+        seen = set()
+        for a in aliases:
+            txt = str(a or "").strip()
+            if not txt:
+                continue
+            key = txt.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            clean.append(txt)
+        data["aliases"] = clean
     return data, None
 
 
@@ -370,6 +390,18 @@ def api_products_list():
     try:
         items = list_products(search=q, only_active=active_only)
         return jsonify({"products": items})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.get("/api/products/search")
+def api_products_search_for_ai():
+    from db import search_products_for_ai
+
+    q = str(request.args.get("q", "")).strip()
+    limit = _to_non_negative_int(request.args.get("limit"), 5)
+    try:
+        return jsonify({"products": search_products_for_ai(q, limit=max(1, min(limit, 20)))})
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500
 
