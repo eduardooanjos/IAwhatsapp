@@ -73,6 +73,10 @@ def _ensure_schema_once():
     _SCHEMA_READY = True
 
 
+def _phone_digits(v: str) -> str:
+    return "".join(ch for ch in str(v or "") if ch.isdigit())
+
+
 def get_client_id_by_instance(instance: str) -> str | None:
     q = text("SELECT id FROM clients WHERE evolution_instance = :i")
     with engine.begin() as conn:
@@ -125,6 +129,20 @@ def ensure_products_table() -> None:
             )
             """
         )
+        ddl_contacts = text(
+            """
+            CREATE TABLE IF NOT EXISTS contacts (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              name TEXT NOT NULL,
+              phone TEXT NOT NULL,
+              phone_digits TEXT NOT NULL,
+              notes TEXT NOT NULL DEFAULT '',
+              created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+              updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+              UNIQUE(phone_digits)
+            )
+            """
+        )
     else:
         ddl_products = text(
             """
@@ -153,9 +171,23 @@ def ensure_products_table() -> None:
             )
             """
         )
+        ddl_contacts = text(
+            """
+            CREATE TABLE IF NOT EXISTS contacts (
+              id BIGSERIAL PRIMARY KEY,
+              name VARCHAR(140) NOT NULL,
+              phone VARCHAR(80) NOT NULL,
+              phone_digits VARCHAR(40) NOT NULL UNIQUE,
+              notes TEXT NOT NULL DEFAULT '',
+              created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+              updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
     with engine.begin() as conn:
         conn.execute(ddl_products)
         conn.execute(ddl_aliases)
+        conn.execute(ddl_contacts)
 
 
 def _normalize_product_row(row: dict) -> dict:
@@ -421,3 +453,135 @@ def search_products_for_ai(query: str, limit: int = 5) -> list[dict]:
 
     scored.sort(key=lambda x: x["score"], reverse=True)
     return scored[: max(1, min(int(limit or 5), 20))]
+
+
+def upsert_contact(name: str, phone: str, notes: str = "") -> dict:
+    _ensure_schema_once()
+    name = str(name or "").strip()
+    phone = str(phone or "").strip()
+    notes = str(notes or "").strip()
+    digits = _phone_digits(phone)
+    if not name:
+        raise ValueError("NAME_REQUIRED")
+    if not digits:
+        raise ValueError("PHONE_REQUIRED")
+
+    if IS_SQLITE:
+        with engine.begin() as conn:
+            existing = conn.execute(
+                text("SELECT id FROM contacts WHERE phone_digits = :d"),
+                {"d": digits},
+            ).first()
+            if existing:
+                q = text(
+                    """
+                    UPDATE contacts
+                       SET name = :name,
+                           phone = :phone,
+                           notes = :notes,
+                           updated_at = CURRENT_TIMESTAMP
+                     WHERE phone_digits = :d
+                    """
+                )
+                conn.execute(q, {"name": name, "phone": phone, "notes": notes, "d": digits})
+            else:
+                q = text(
+                    """
+                    INSERT INTO contacts (name, phone, phone_digits, notes)
+                    VALUES (:name, :phone, :d, :notes)
+                    """
+                )
+                conn.execute(q, {"name": name, "phone": phone, "d": digits, "notes": notes})
+            row = conn.execute(
+                text(
+                    """
+                    SELECT id, name, phone, phone_digits, notes, created_at, updated_at
+                    FROM contacts
+                    WHERE phone_digits = :d
+                    """
+                ),
+                {"d": digits},
+            ).mappings().first()
+            return dict(row) if row else {}
+
+    with engine.begin() as conn:
+        q = text(
+            """
+            INSERT INTO contacts (name, phone, phone_digits, notes)
+            VALUES (:name, :phone, :d, :notes)
+            ON CONFLICT (phone_digits) DO UPDATE
+              SET name = EXCLUDED.name,
+                  phone = EXCLUDED.phone,
+                  notes = EXCLUDED.notes,
+                  updated_at = CURRENT_TIMESTAMP
+            RETURNING id, name, phone, phone_digits, notes, created_at, updated_at
+            """
+        )
+        row = conn.execute(q, {"name": name, "phone": phone, "d": digits, "notes": notes}).mappings().first()
+        return dict(row) if row else {}
+
+
+def list_contacts(search: str = "") -> list[dict]:
+    _ensure_schema_once()
+    term = str(search or "").strip()
+    params = {}
+    where_sql = ""
+    if term:
+        if IS_SQLITE:
+            params["q"] = f"%{term.lower()}%"
+            where_sql = "WHERE LOWER(name) LIKE :q OR LOWER(phone) LIKE :q"
+        else:
+            params["q"] = f"%{term}%"
+            where_sql = "WHERE name ILIKE :q OR phone ILIKE :q"
+    q = text(
+        f"""
+        SELECT id, name, phone, phone_digits, notes, created_at, updated_at
+        FROM contacts
+        {where_sql}
+        ORDER BY name ASC
+        LIMIT 500
+        """
+    )
+    with engine.begin() as conn:
+        return [dict(r) for r in conn.execute(q, params).mappings().all()]
+
+
+def delete_contact_by_phone(phone: str) -> bool:
+    _ensure_schema_once()
+    digits = _phone_digits(phone)
+    if not digits:
+        return False
+    q = text("DELETE FROM contacts WHERE phone_digits = :d")
+    with engine.begin() as conn:
+        res = conn.execute(q, {"d": digits})
+        return (res.rowcount or 0) > 0
+
+
+def get_contact_map_for_phones(phones: list[str]) -> dict[str, dict]:
+    _ensure_schema_once()
+    digit_map = {}
+    for p in phones:
+        d = _phone_digits(p)
+        if d:
+            digit_map[d] = p
+    if not digit_map:
+        return {}
+
+    q = (
+        text(
+            """
+            SELECT id, name, phone, phone_digits, notes, created_at, updated_at
+            FROM contacts
+            WHERE phone_digits IN :digits
+            """
+        ).bindparams(bindparam("digits", expanding=True))
+    )
+    with engine.begin() as conn:
+        rows = conn.execute(q, {"digits": list(digit_map.keys())}).mappings().all()
+    out = {}
+    for row in rows:
+        d = str(row.get("phone_digits") or "")
+        original = digit_map.get(d)
+        if original:
+            out[original] = dict(row)
+    return out

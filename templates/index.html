@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>WhatsApp Web + IA</title>
+  <title>CHATBOT</title>
   <link rel="stylesheet" href="/static/css/style.css" />
 </head>
 <body>
@@ -16,9 +16,12 @@
 
     <aside class="wa-sidebar">
       <div class="wa-sidebar-header">
-        <span class="wa-logo">💬</span>
-        <span class="wa-title">WhatsApp + IA</span>
+        <div class="wa-sidebar-brand">
+          <span class="wa-logo">💬</span>
+          <span class="wa-title">CHATBOT</span>
+        </div>
       </div>
+
       <div class="wa-chatlist" id="chatList"></div>
     </aside>
 
@@ -27,6 +30,9 @@
         <div class="wa-contact">
           <div class="wa-contact-avatar" id="activeContactAvatar">?</div>
           <div class="wa-contact-name" id="activeContactName">Selecione uma conversa</div>
+          <input id="inlineContactNameInput" class="wa-inline-contact-name" type="text" placeholder="Nome do contato" />
+          <button id="newContactBtn" class="wa-mini-btn" type="button">+</button>
+          <button id="deleteContactBtn" class="wa-mini-btn wa-mini-btn-danger wa-hidden" type="button">🗑️</button>
         </div>
         <button id="aiToggleBtn" class="wa-ai-btn" disabled>IA: -</button>
       </header>

@@ -6,6 +6,9 @@ const els = {
   activeName: document.getElementById("activeContactName"),
   activeAvatar: document.getElementById("activeContactAvatar"),
   aiToggleBtn: document.getElementById("aiToggleBtn"),
+  newContactBtn: document.getElementById("newContactBtn"),
+  deleteContactBtn: document.getElementById("deleteContactBtn"),
+  inlineContactNameInput: document.getElementById("inlineContactNameInput"),
 };
 
 const state = {
@@ -14,6 +17,7 @@ const state = {
   history: [],
   pollTimer: null,
   lastChatNumero: null,
+  isEditingContact: false,
 };
 
 function isNearBottom(el, thresholdPx = 40) {
@@ -59,6 +63,13 @@ async function apiPost(url, body) {
   return data;
 }
 
+async function apiDelete(url) {
+  const r = await fetch(url, { method: "DELETE" });
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(data.error || `DELETE ${url} falhou`);
+  return data;
+}
+
 function renderChats() {
   els.chatList.innerHTML = "";
 
@@ -70,12 +81,14 @@ function renderChats() {
   }
 
   state.chats.forEach((chat) => {
+    const displayName = chat.display_name || chat.contact_name || chat.numero;
     const div = document.createElement("div");
     div.className = "wa-chat" + (state.active?.numero === chat.numero ? " active" : "");
     div.innerHTML = `
-      <div class="wa-chat-avatar">${firstLetter(chat.numero)}</div>
+      <div class="wa-chat-avatar">${firstLetter(displayName)}</div>
       <div class="wa-chat-info">
-        <div class="wa-chat-name">${escapeHtml(chat.numero)}</div>
+        <div class="wa-chat-name">${escapeHtml(displayName)}</div>
+        <div class="wa-chat-lastmsg">${escapeHtml(chat.numero)}</div>
         <div class="wa-chat-lastmsg">${escapeHtml(chat.last_preview || "Sem mensagens")}</div>
       </div>
       <span class="wa-ai-pill ${chat.ai_enabled ? "on" : "off"}">${chat.ai_enabled ? "IA ON" : "IA OFF"}</span>
@@ -91,14 +104,35 @@ function renderHeader() {
     els.activeAvatar.textContent = "?";
     els.aiToggleBtn.disabled = true;
     els.aiToggleBtn.textContent = "IA: -";
+    els.newContactBtn.disabled = true;
+    els.newContactBtn.textContent = "+";
+    els.deleteContactBtn.classList.add("wa-hidden");
+    els.deleteContactBtn.disabled = true;
+    els.inlineContactNameInput.classList.remove("visible");
+    state.isEditingContact = false;
     return;
   }
 
-  els.activeName.textContent = state.active.numero;
-  els.activeAvatar.textContent = firstLetter(state.active.numero);
+  const hasSavedContact = !!(state.active.contact_name || "").trim();
+  const headerName = hasSavedContact ? state.active.contact_name : state.active.numero;
+  els.activeName.textContent = headerName;
+  els.activeAvatar.textContent = firstLetter(state.active.contact_name || state.active.numero);
   els.aiToggleBtn.disabled = false;
   els.aiToggleBtn.textContent = state.active.ai_enabled ? "IA: ON" : "IA: OFF";
   els.aiToggleBtn.classList.toggle("off", !state.active.ai_enabled);
+  els.newContactBtn.disabled = false;
+
+  if (state.isEditingContact) {
+    els.inlineContactNameInput.classList.add("visible");
+    els.newContactBtn.textContent = "✅";
+    els.deleteContactBtn.classList.toggle("wa-hidden", !hasSavedContact);
+    els.deleteContactBtn.disabled = !hasSavedContact;
+  } else {
+    els.inlineContactNameInput.classList.remove("visible");
+    els.newContactBtn.textContent = hasSavedContact ? "📝" : "+";
+    els.deleteContactBtn.classList.add("wa-hidden");
+    els.deleteContactBtn.disabled = true;
+  }
 }
 
 function renderMessages() {
@@ -167,6 +201,8 @@ async function loadActiveHistory() {
   const data = await apiGet(`/api/chat/${encodeURIComponent(state.active.numero)}`);
   state.active = {
     numero: data.numero,
+    contact_name: data.contact_name || "",
+    display_name: data.display_name || data.contact_name || data.numero,
     ai_enabled: !!data.ai_enabled,
     updated_at: data.updated_at,
     last_preview: data.last_preview || "",
@@ -200,6 +236,42 @@ async function toggleAi() {
   await loadActiveHistory();
 }
 
+function setContactEditor(open) {
+  state.isEditingContact = open;
+  if (open && state.active) {
+    els.inlineContactNameInput.value = state.active.contact_name || "";
+    els.inlineContactNameInput.classList.add("visible");
+    els.inlineContactNameInput.focus();
+    els.inlineContactNameInput.select();
+  }
+  if (!open) {
+    els.inlineContactNameInput.classList.remove("visible");
+  }
+  renderHeader();
+}
+
+async function saveInlineContact() {
+  if (!state.active) return;
+  const name = (els.inlineContactNameInput.value || "").trim();
+  const phone = (state.active.numero || "").trim();
+  if (!name || !phone) {
+    alert("Informe o nome do contato.");
+    return;
+  }
+  await apiPost("/api/contacts", { name, phone });
+  setContactEditor(false);
+  await loadChats();
+  if (state.active?.numero) await loadActiveHistory();
+}
+
+async function deleteInlineContact() {
+  if (!state.active?.numero) return;
+  await apiDelete(`/api/contacts/${encodeURIComponent(state.active.numero)}`);
+  setContactEditor(false);
+  await loadChats();
+  await loadActiveHistory();
+}
+
 function wire() {
   els.composer.addEventListener("submit", async (e) => {
     e.preventDefault();
@@ -215,6 +287,44 @@ function wire() {
       await toggleAi();
     } catch (err) {
       alert(err.message || "Erro ao alternar IA");
+    }
+  });
+
+  els.newContactBtn.addEventListener("click", async () => {
+    if (!state.active) return;
+    if (!state.isEditingContact) {
+      setContactEditor(true);
+      return;
+    }
+    try {
+      await saveInlineContact();
+    } catch (err) {
+      alert(err.message || "Erro ao salvar contato");
+    }
+  });
+
+  els.deleteContactBtn.addEventListener("click", async () => {
+    if (!state.active?.contact_name) return;
+    const ok = confirm(`Excluir o contato "${state.active.contact_name}"?`);
+    if (!ok) return;
+    try {
+      await deleteInlineContact();
+    } catch (err) {
+      alert(err.message || "Erro ao excluir contato");
+    }
+  });
+
+  els.inlineContactNameInput.addEventListener("keydown", async (e) => {
+    if (e.key === "Escape") {
+      setContactEditor(false);
+      return;
+    }
+    if (e.key !== "Enter") return;
+    e.preventDefault();
+    try {
+      await saveInlineContact();
+    } catch (err) {
+      alert(err.message || "Erro ao salvar contato");
     }
   });
 }

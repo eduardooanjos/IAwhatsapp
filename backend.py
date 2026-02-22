@@ -9,7 +9,17 @@ from jinja2 import Template
 
 load_dotenv(dotenv_path=".env", override=True)
 
-from db import ensure_products_table, list_products, create_product, update_product, delete_product
+from db import (
+    ensure_products_table,
+    list_products,
+    create_product,
+    update_product,
+    delete_product,
+    upsert_contact,
+    list_contacts,
+    delete_contact_by_phone,
+    get_contact_map_for_phones,
+)
 from memory import mem_add, mem_get
 from sender import send_text
 
@@ -213,7 +223,7 @@ def _list_chat_numbers():
     return sorted(set(numbers))
 
 
-def _chat_snapshot(phone):
+def _chat_snapshot(phone, contact=None):
     history = mem_get(phone, max_items=100)
     updated_at = 0
     last_preview = ""
@@ -221,8 +231,13 @@ def _chat_snapshot(phone):
         last = history[-1]
         updated_at = int(last.get("t") or 0)
         last_preview = (last.get("content") or "").strip()
+    contact_name = ""
+    if isinstance(contact, dict):
+        contact_name = str(contact.get("name") or "").strip()
     return {
         "numero": phone,
+        "contact_name": contact_name,
+        "display_name": contact_name or phone,
         "ai_enabled": _is_ai_enabled(phone),
         "updated_at": updated_at,
         "last_preview": last_preview[:160],
@@ -293,7 +308,9 @@ def products_page():
 
 @app.get("/api/chats")
 def api_chats():
-    chats = [_chat_snapshot(phone) for phone in _list_chat_numbers()]
+    numbers = _list_chat_numbers()
+    contact_map = get_contact_map_for_phones(numbers)
+    chats = [_chat_snapshot(phone, contact_map.get(phone)) for phone in numbers]
     chats.sort(key=lambda c: (c.get("updated_at") or 0), reverse=True)
     return jsonify({"chats": chats})
 
@@ -309,8 +326,49 @@ def api_chat(numero):
         }
         for it in raw
     ]
-    snap = _chat_snapshot(numero)
+    contact_map = get_contact_map_for_phones([numero])
+    snap = _chat_snapshot(numero, contact_map.get(numero))
     return jsonify({**snap, "history": history})
+
+
+@app.get("/api/contacts")
+def api_contacts_list():
+    q = str(request.args.get("q", "")).strip()
+    try:
+        return jsonify({"contacts": list_contacts(search=q)})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.post("/api/contacts")
+def api_contacts_upsert():
+    body = request.get_json(silent=True) or {}
+    name = str(body.get("name", "")).strip()
+    phone = str(body.get("phone", "")).strip()
+    notes = str(body.get("notes", "")).strip()
+    if not name:
+        return jsonify({"ok": False, "error": "NAME_REQUIRED"}), 400
+    if not phone:
+        return jsonify({"ok": False, "error": "PHONE_REQUIRED"}), 400
+    try:
+        contact = upsert_contact(name=name, phone=phone, notes=notes)
+        return jsonify({"ok": True, "contact": contact})
+    except ValueError as e:
+        return jsonify({"ok": False, "error": str(e)}), 400
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.delete("/api/contacts/<numero>")
+def api_contacts_delete(numero):
+    numero = str(numero or "").strip()
+    if not numero:
+        return jsonify({"ok": False, "error": "PHONE_REQUIRED"}), 400
+    try:
+        ok = delete_contact_by_phone(numero)
+        return jsonify({"ok": True, "deleted": bool(ok)})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
 
 
 @app.post("/api/chat/<numero>/send")
