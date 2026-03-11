@@ -70,6 +70,7 @@ def _ensure_schema_once():
     if _SCHEMA_READY:
         return
     ensure_products_table()
+    ensure_responses_table()
     _SCHEMA_READY = True
 
 
@@ -189,6 +190,202 @@ def ensure_products_table() -> None:
         conn.execute(ddl_aliases)
         conn.execute(ddl_contacts)
 
+
+def ensure_responses_table() -> None:
+    if IS_SQLITE:
+        ddl_responses = text(
+            """
+            CREATE TABLE IF NOT EXISTS canned_responses (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              question TEXT NOT NULL,
+              answer TEXT NOT NULL,
+              tags TEXT NOT NULL DEFAULT '',
+              active INTEGER NOT NULL DEFAULT 1,
+              created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+              updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+    else:
+        ddl_responses = text(
+            """
+            CREATE TABLE IF NOT EXISTS canned_responses (
+              id BIGSERIAL PRIMARY KEY,
+              question TEXT NOT NULL,
+              answer TEXT NOT NULL,
+              tags TEXT NOT NULL DEFAULT '',
+              active BOOLEAN NOT NULL DEFAULT TRUE,
+              created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+              updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+    with engine.begin() as conn:
+        conn.execute(ddl_responses)
+
+
+def _split_tags(v) -> list[str]:
+    if isinstance(v, list):
+        raw = v
+    else:
+        raw = str(v or "").replace("\n", ",").split(",")
+    clean = []
+    seen = set()
+    for item in raw:
+        tag = str(item or "").strip()
+        if not tag:
+            continue
+        key = _normalize_text(tag)
+        if key in seen:
+            continue
+        seen.add(key)
+        clean.append(tag)
+    return clean
+
+
+def _join_tags(tags: list[str]) -> str:
+    return ", ".join(_split_tags(tags))
+
+
+def _normalize_response_row(row: dict) -> dict:
+    out = dict(row)
+    if IS_SQLITE:
+        out["active"] = bool(out.get("active"))
+    out["tags"] = _split_tags(out.get("tags", ""))
+    return out
+
+
+def list_responses(search: str = "", only_active: bool = False) -> list[dict]:
+    _ensure_schema_once()
+    where = []
+    if only_active:
+        where.append("active = 1" if IS_SQLITE else "active = TRUE")
+    where_sql = ("WHERE " + " AND ".join(where)) if where else ""
+
+    q = text(
+        f"""
+        SELECT id, question, answer, tags, active, created_at, updated_at
+        FROM canned_responses
+        {where_sql}
+        ORDER BY id DESC
+        LIMIT 500
+        """
+    )
+    with engine.begin() as conn:
+        rows = [_normalize_response_row(dict(r)) for r in conn.execute(q).mappings().all()]
+
+    term = _normalize_text(search)
+    if not term:
+        return rows
+
+    filtered = []
+    for item in rows:
+        hay = " ".join(
+            [
+                _normalize_text(item.get("question", "")),
+                _normalize_text(item.get("answer", "")),
+                _normalize_text(" ".join(item.get("tags", []))),
+            ]
+        )
+        if term in hay:
+            filtered.append(item)
+    return filtered
+
+
+def create_response(data: dict) -> dict:
+    _ensure_schema_once()
+    payload = dict(data)
+    payload["tags"] = _join_tags(payload.get("tags", []))
+    if IS_SQLITE:
+        payload["active"] = 1 if payload.get("active", True) else 0
+        q = text(
+            """
+            INSERT INTO canned_responses (question, answer, tags, active)
+            VALUES (:question, :answer, :tags, :active)
+            """
+        )
+        with engine.begin() as conn:
+            res = conn.execute(q, payload)
+            row = conn.execute(
+                text(
+                    """
+                    SELECT id, question, answer, tags, active, created_at, updated_at
+                    FROM canned_responses
+                    WHERE id = :id
+                    """
+                ),
+                {"id": int(res.lastrowid)},
+            ).mappings().first()
+            return _normalize_response_row(dict(row)) if row else {}
+
+    q = text(
+        """
+        INSERT INTO canned_responses (question, answer, tags, active)
+        VALUES (:question, :answer, :tags, :active)
+        RETURNING id, question, answer, tags, active, created_at, updated_at
+        """
+    )
+    with engine.begin() as conn:
+        row = conn.execute(q, payload).mappings().first()
+        return _normalize_response_row(dict(row)) if row else {}
+
+
+def update_response(response_id: int, data: dict) -> dict | None:
+    _ensure_schema_once()
+    payload = {**data, "id": int(response_id)}
+    payload["tags"] = _join_tags(payload.get("tags", []))
+    if IS_SQLITE:
+        payload["active"] = 1 if payload.get("active", True) else 0
+        q = text(
+            """
+            UPDATE canned_responses
+               SET question = :question,
+                   answer = :answer,
+                   tags = :tags,
+                   active = :active,
+                   updated_at = CURRENT_TIMESTAMP
+             WHERE id = :id
+            """
+        )
+        with engine.begin() as conn:
+            res = conn.execute(q, payload)
+            if (res.rowcount or 0) <= 0:
+                return None
+            row = conn.execute(
+                text(
+                    """
+                    SELECT id, question, answer, tags, active, created_at, updated_at
+                    FROM canned_responses
+                    WHERE id = :id
+                    """
+                ),
+                {"id": int(response_id)},
+            ).mappings().first()
+            return _normalize_response_row(dict(row)) if row else None
+
+    q = text(
+        """
+        UPDATE canned_responses
+           SET question = :question,
+               answer = :answer,
+               tags = :tags,
+               active = :active,
+               updated_at = CURRENT_TIMESTAMP
+         WHERE id = :id
+         RETURNING id, question, answer, tags, active, created_at, updated_at
+        """
+    )
+    with engine.begin() as conn:
+        row = conn.execute(q, payload).mappings().first()
+        return _normalize_response_row(dict(row)) if row else None
+
+
+def delete_response(response_id: int) -> bool:
+    _ensure_schema_once()
+    q = text("DELETE FROM canned_responses WHERE id = :id")
+    with engine.begin() as conn:
+        res = conn.execute(q, {"id": int(response_id)})
+        return (res.rowcount or 0) > 0
 
 def _normalize_product_row(row: dict) -> dict:
     out = dict(row)

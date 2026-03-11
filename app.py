@@ -11,10 +11,15 @@ load_dotenv(dotenv_path=".env", override=True)
 
 from db import (
     ensure_products_table,
+    ensure_responses_table,
     list_products,
     create_product,
     update_product,
     delete_product,
+    list_responses,
+    create_response,
+    update_response,
+    delete_response,
     upsert_contact,
     list_contacts,
     delete_contact_by_phone,
@@ -26,6 +31,7 @@ from backend_tabs.pages_routes import register_pages_routes
 from backend_tabs.chats_routes import register_chat_tab_routes
 from backend_tabs.config_routes import register_config_tab_routes
 from backend_tabs.products_routes import register_products_tab_routes
+from backend_tabs.responses_routes import register_responses_tab_routes
 
 app = Flask(__name__)
 PORT = int(os.getenv("WEB_PORT", "8000"))
@@ -295,6 +301,38 @@ def _parse_product_payload(body):
     return data, None
 
 
+def _parse_response_payload(body):
+    question = str(body.get("question", "")).strip()
+    answer = str(body.get("answer", "")).strip()
+    if not question:
+        return None, "QUESTION_REQUIRED"
+    if not answer:
+        return None, "ANSWER_REQUIRED"
+    tags = body.get("tags", [])
+    if isinstance(tags, str):
+        tags = [x.strip() for x in tags.replace("\n", ",").split(",") if str(x).strip()]
+    if not isinstance(tags, list):
+        tags = []
+    clean = []
+    seen = set()
+    for t in tags:
+        txt = str(t or "").strip()
+        if not txt:
+            continue
+        key = txt.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        clean.append(txt)
+    data = {
+        "question": question,
+        "answer": answer,
+        "tags": clean,
+        "active": bool(body.get("active", True)),
+    }
+    return data, None
+
+
 register_pages_routes(app)
 
 register_chat_tab_routes(
@@ -333,9 +371,19 @@ register_products_tab_routes(
     to_non_negative_int=_to_non_negative_int,
 )
 
+register_responses_tab_routes(
+    app,
+    list_responses=list_responses,
+    create_response=create_response,
+    update_response=update_response,
+    delete_response=delete_response,
+    parse_response_payload=_parse_response_payload,
+)
+
 
 if __name__ == "__main__":
     if _is_effective_process():
         ensure_products_table()
+        ensure_responses_table()
         print(f"Painel rodando em http://0.0.0.0:{PORT}")
     app.run(host="0.0.0.0", port=PORT, debug=APP_DEBUG)

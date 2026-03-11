@@ -13,3 +13,7 @@ def register_pages_routes(app):
     @app.get("/products")
     def products_page():
         return render_template("products.html")
+
+    @app.get("/responses")
+    def responses_page():
+        return render_template("responses.html")

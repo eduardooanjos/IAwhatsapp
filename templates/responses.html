@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Respostas Prontas</title>
+  <link rel="stylesheet" href="/static/css/style.css" />
+</head>
+<body>
+  <div class="wa-app">
+    <nav class="wa-rail">
+      <a class="wa-rail-item" href="/" title="Conversas">💬</a>
+      <a class="wa-rail-item" href="/products" title="Produtos">📦</a>
+      <a class="wa-rail-item active" href="/responses" title="Respostas prontas">❓</a>
+      <a class="wa-rail-item" href="/config" title="Configuracoes">⚙</a>
+    </nav>
+
+    <div class="responses-page">
+      <header class="responses-header">
+        <div>
+          <h1>Cadastro de Respostas Prontas</h1>
+          <p>Registre perguntas frequentes e as respostas sugeridas.</p>
+        </div>
+      </header>
+
+      <section class="responses-card">
+        <h2 id="formTitle">Nova resposta</h2>
+        <form id="responseForm" class="responses-form">
+          <input type="hidden" id="responseId" />
+
+          <label>Pergunta</label>
+          <input id="question" type="text" required />
+
+          <label>Resposta</label>
+          <textarea id="answer" rows="4"></textarea>
+
+          <label>Tags (separadas por virgula)</label>
+          <input id="tags" type="text" placeholder="ex: entrega, pagamento, horario" />
+
+          <label class="responses-checkbox">
+            <input id="active" type="checkbox" checked />
+            Resposta ativa
+          </label>
+
+          <div class="responses-form-actions">
+            <button class="cfg-save-btn" type="submit">Salvar resposta</button>
+            <button class="responses-btn-secondary" type="button" id="cancelEditBtn">Cancelar edicao</button>
+          </div>
+        </form>
+      </section>
+
+      <section class="responses-card">
+        <div class="responses-toolbar">
+          <input id="searchInput" type="text" placeholder="Buscar por pergunta, resposta ou tag..." />
+          <button id="reloadBtn" class="responses-btn-secondary" type="button">Atualizar</button>
+        </div>
+        <div id="statusText" class="cfg-footer"></div>
+        <div id="responsesList" class="responses-list"></div>
+      </section>
+    </div>
+  </div>
+
+  <script src="/static/js/responses.js"></script>
+</body>
+</html>
