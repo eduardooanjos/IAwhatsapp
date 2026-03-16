@@ -1,142 +1,109 @@
-🤖 WhatsApp AI Assistant (Evolution + Gemini + Redis)
+# AI Automated Chat Service – Documentation
 
-Sistema de atendimento automatizado via WhatsApp, utilizando:
+## 1. Description
 
-📲 Evolution API (integração WhatsApp)
+This system was developed to automate customer service using artificial intelligence integrated with chat services.
+The application allows configuring automatic responses, registering questions, defining response context, and controlling the behavior of the AI model.
 
-🧠 Google Gemini API (IA)
+The system works as an intermediary between the chat service and the AI API.
 
-🗄 Redis (memória + debounce inteligente)
+---
 
-🐍 Flask (Webhook server)
+## 2. System Interface
 
-O sistema aguarda 2 minutos após a última mensagem do cliente antes de responder, permitindo que o usuário envie várias mensagens seguidas e a IA responda de forma consolidada.
+### 2.1 Chats Screen
 
-📌 Arquitetura
-Cliente WhatsApp
-        ↓
-Evolution API
-        ↓
-Webhook (Flask)
-        ↓
-Redis (Buffer + Debounce + Histórico)
-        ↓
-Gemini API (IA)
-        ↓
-Evolution API (sendText)
-        ↓
-Cliente
+This screen displays the conversations received by the system.
+Messages can be monitored and answered automatically according to the configured rules.
 
-🧠 Como Funciona
-🔹 1. Recebimento
+![Chats](images/chat.png)
 
-O webhook recebe eventos messages.upsert.
+Functions:
 
-🔹 2. Buffer Inteligente
+* View messages
+* Monitor conversations
+* Identify users
+* Send automatic responses
 
-Cada mensagem:
+---
 
-É armazenada no Redis
+### 2.2 Product Registration (Test Implementation)
 
-Reagenda o tempo de resposta para agora + 120 segundos
+Screen used to register products.
+Currently implemented only as a test structure for future integration with automatic responses.
 
-🔹 3. Debounce
+![Products](images/products.png)
 
-Se o cliente parar de enviar mensagens por 2 minutos:
+Functions:
 
-Todas as mensagens acumuladas são unificadas
+* Add product
+* Edit product
+* Remove product
+* Associate product data with responses
 
-A IA gera uma única resposta
+---
 
-A resposta é enviada
+### 2.3 Question Registration and Response Direction
 
-📁 Estrutura do Projeto
-.
-├── webhook.py        # Servidor Flask + Orquestração
-├── ai_service.py     # Lógica da IA (Gemini)
-├── sender.py         # Envio via Evolution API
-├── parser.py         # Extração de número e texto
-├── memory.py         # Histórico Redis
-├── buffer.py         # Debounce de 2 minutos
-├── .env
-└── README.md
+This screen allows registering expected questions and defining the direction that the AI response should follow.
 
-⚙️ Variáveis de Ambiente
-🔹 .env
-# Evolution
-AUTHENTICATION_API_KEY=
-EVOLUTION_API=http://localhost:8080/message/sendText/secundario
+This helps control the behavior of the model and improve response accuracy.
 
-# Webhook
-WEBHOOK_ENABLED=true
+![Questions](images/questions.png)
 
-# Redis
-CACHE_REDIS_ENABLED=true
-CACHE_REDIS_URI=redis://localhost:6379/6
-CACHE_REDIS_PREFIX_KEY=evolution
+Functions:
 
-# Gemini
-GEMINI_MODEL=gemini-3-flash-preview
+* Register question patterns
+* Define expected context
+* Define response direction
+* Assist prompt construction
 
+---
 
-⚠ A GEMINI_API_KEY deve estar configurada nas variáveis do sistema Windows.
+### 2.4 AI Settings
 
-🐳 Redis (Docker)
+Screen responsible for configuring AI behavior.
 
-Rodando via container:
+![Settings](images/settings.png)
 
-docker run -d \
-  --name redis \
-  -p 6379:6379 \
-  redis:7
+Available settings:
 
-▶️ Executar o Projeto
+* Main prompt
+* Additional data
+* AI model configuration
+* Response delay
+* Generation parameters
 
-Instale dependências:
+Default delay:
+2 minutes
 
-pip install flask redis python-dotenv google-genai requests
+The delay is used to avoid instant responses and simulate a more natural interaction.
 
+---
 
-Execute:
+## 3. System Workflow
 
-python webhook.py
+Basic flow:
 
+1. The system receives a chat message
+2. Registered questions are checked
+3. The prompt is generated
+4. The request is sent to the AI API
+5. The configured delay is applied
+6. The response is sent automatically
 
-Servidor disponível em:
+---
 
-http://localhost:5000/webhook
+## 4. Technologies
 
-🧩 Fluxo do Debounce
-Exemplo real:
+* AI API
+* Docker
+* Backend service
+* Database
+* Web interface
 
-Cliente envia:
+---
 
-Oi
-Tudo bem?
-Queria saber preço
+## 5. Notes
 
-
-Sistema:
-
-Armazena tudo
-
-Espera 2 minutos
-
-Envia uma única resposta contextualizada
-
-🛡 Controle de Duplicidade
-
-A Evolution pode reenviar eventos múltiplas vezes.
-O sistema:
-
-Usa message.key.id
-
-Armazena em Redis com TTL
-
-Ignora mensagens duplicadas
-
-👨‍💻 Autor
-
-Eduardo Henrique
-Engenharia de Computação – UTFPR
-Foco em IA, backend e sistemas distribuídos.
+This project is under development and is being used for study, testing, and academic purposes.

@@ -12,7 +12,7 @@
   ],
   "store": {
     "name": "Casa do Perfume",
-    "address": "Rua Exemplo, 123 - Centro - Porto Velho/RO (Ref.: perto do mercado)",
+    "address": "Rua Exemplo, 123 - Centro - Toledo/PR (Ref.: perto do mercado)",
     "hours": "Seg–Sex 08:00–18:00 | Sáb 08:00–12:00 | Dom Fechado | Feriados: Fechado",
     "delivery": "Sim. Áreas: Centro, Zona Sul. Taxa: depende do bairro. Prazo: 30–90 min.",
     "pickup": "Sim. Retirar no balcão e informar o nome.",
@@ -27,7 +27,7 @@
   },
   "ai_settings": {
     "response_delay_seconds": 0,
-    "timezone": "America/Porto_Velho",
+    "timezone": "America/Brasilia",
     "business_hours_policy": "",
     "outside_hours_message": "",
     "handoff_contact": "",
