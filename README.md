@@ -1,4 +1,4 @@
-# AI Automated Chat Service – Documentation
+# Service for integration with LLM and chat applications
 
 ## 1. Description
 
