@@ -97,7 +97,8 @@ Basic flow:
 ## 4. Technologies
 
 * AI API
-* Docker
+* [Docker](https://www.docker.com/)
+* [Evolution API](https://github.com/EvolutionAPI/evolution-api)
 * Backend service
 * Database
 * Web interface
